@@ -157,6 +157,8 @@ let clockInTime= null;
 let PAY        = {};
 let _clients   = FB_CLIENTS;
 let _leads     = [];
+let USER_DB_IDS= {}; // username → uuid
+let USER_NAMES = {}; // uuid → full_name
 
 // ════════════════════════════════════════════
 // UTILS
@@ -171,6 +173,7 @@ function fmtTime(ts){if(!ts)return'—';const d=new Date(ts);return d.getHours()
 function fmtDate(ts){if(!ts)return'—';const d=new Date(ts);const days=['Dim','Lun','Mar','Mer','Jeu','Ven','Sam'];return days[d.getDay()]+' '+d.getDate()}
 function fmtRelDate(ts){if(!ts)return'';const d=new Date(ts);const now=new Date();const diff=Math.floor((now-d)/86400000);return diff===0?'Auj.':diff===1?'Hier':(d.getDate()+' '+(d.toLocaleString('fr',{month:'short'})))}
 async function supa(fn){try{return await fn()}catch(e){console.warn('Supabase:',e.message||e);return null}}
+async function loadUserIds(){const res=await supa(()=>db.from('users').select('id,username,full_name'));if(res?.data){res.data.forEach(u=>{USER_DB_IDS[u.username]=u.id;USER_NAMES[u.id]=u.full_name;})}}
 
 // ════════════════════════════════════════════
 // LOGIN
@@ -211,7 +214,7 @@ function doLogout(){
 // ════════════════════════════════════════════
 // APP LAUNCH
 // ════════════════════════════════════════════
-function launchApp(user){
+async function launchApp(user){
   document.getElementById('login-screen').style.display='none';
   document.getElementById('app').classList.add('show');
   document.getElementById('tb-av').textContent=user.av;
@@ -219,6 +222,8 @@ function launchApp(user){
   const rb=document.getElementById('tb-role');rb.textContent=user.rl;rb.className='rb '+user.rc;
   document.getElementById('tb-date').textContent=getDate();
   buildSidebar(user);
+  await loadUserIds();
+  curUser.db_id=USER_DB_IDS[user.username]||null;
   initPages(user);
   const nk=getNavKey(user);
   showPg(NAV[nk][0].i[0].id);
@@ -277,7 +282,7 @@ async function loadDashCards(){
   const el=document.getElementById('dash-cards');if(!el)return;
   let cards;
   const r=await supa(()=>Promise.all([
-    db.from('leads').select('stage',{count:'exact',head:true}).eq('stage','new'),
+    db.from('leads').select('pipeline_stage',{count:'exact',head:true}).eq('pipeline_stage','new'),
     db.from('jobs').select('id',{count:'exact',head:true}).gte('created_at',weekStart()),
     db.from('quotes').select('id',{count:'exact',head:true}).eq('status','sent'),
     db.from('quotes').select('id',{count:'exact',head:true}).eq('status','signed'),
@@ -309,13 +314,14 @@ async function loadDashCards(){
 async function loadPerf(key){
   const el=document.getElementById('perf-view');if(!el)return;
   const uname=REP_USERNAME[key];
-  const res=await supa(()=>db.from('commissions')
-    .select('sales_amount,commission_amount,bonus,jobs_count,rate,doors_knocked,deals_closed')
-    .eq('username',uname).eq('week_of',weekStart()).maybeSingle());
+  const uid=USER_DB_IDS[uname];
+  const res=uid?await supa(()=>db.from('commissions')
+    .select('base_amount,commission_amount,bonus_amount,rate')
+    .eq('user_id',uid).eq('week_start',weekStart()).maybeSingle()):null;
   let d;
   if(res&&res.data){
     const c=res.data;
-    d={name:FB_PERF[key]?.name||uname,ventes:c.sales_amount||0,portes:c.doors_knocked||0,closes:c.deals_closed||0,taux:c.rate||0,comm:c.commission_amount||0};
+    d={name:FB_PERF[key]?.name||uname,ventes:c.base_amount||0,portes:0,closes:0,taux:c.rate||0,comm:c.commission_amount||0};
   } else {
     d=FB_PERF[key]||FB_PERF.nathan;
   }
@@ -334,12 +340,12 @@ function renderPerf(key){loadPerf(key)}
 // CLIENTS
 // ════════════════════════════════════════════
 async function loadClientsList(){
-  const res=await supa(()=>db.from('clients').select('*').order('name'));
+  const res=await supa(()=>db.from('clients').select('*').order('full_name'));
   if(res&&res.data&&res.data.length){
     _clients=res.data.map(c=>({
-      id:c.id,name:c.name||'',addr:c.address||'',tel:c.phone||'',email:c.email||'',
-      svcs:c.services||[],vitres:c.num_vitres||null,pi:c.superficie_pi2||null,
-      notes:c.notes||'',contrats:c.contrats||[],
+      id:c.id,name:c.full_name||'',addr:c.address||'',tel:c.phone||'',email:c.email||'',
+      svcs:c.service_type?[c.service_type]:[],vitres:c.nb_vitres||null,pi:c.superficie_pi2||null,
+      notes:c.notes||'',contrats:[],
     }));
   }
   renderClientsList();
@@ -396,7 +402,7 @@ async function saveClient(){
   const notes=inputs[5]?.value.trim()||'';
   if(!fname||!lname){toast('Prénom et nom requis',true);return}
   const name=fname+' '+lname;
-  const res=await supa(()=>db.from('clients').insert({name,address:addr,phone,email,notes,services:chips}).select().single());
+  const res=await supa(()=>db.from('clients').insert({full_name:name,address:addr,phone,email,notes,service_type:chips[0]||null}).select().single());
   if(res&&res.data){
     _clients.unshift({id:res.data.id,name,addr,tel:phone,email,svcs:chips,notes,contrats:[]});
     renderClientsList();
@@ -432,10 +438,10 @@ const STAGE_CONFIG = [
 function leadsToColumns(leads){
   return STAGE_CONFIG.map(s=>({
     ...s,
-    deals:leads.filter(l=>l.stage===s.id).map(l=>({
-      _id:l.id,n:l.name,s:l.service||l.service_type||'',
-      p:l.price||0,src:l.source||'',tel:l.phone||'',
-      d:fmtRelDate(l.created_at),rep:l.rep_name||l.rep_username||'',
+    deals:leads.filter(l=>l.pipeline_stage===s.id).map(l=>({
+      _id:l.id,n:l.full_name||l.name||'',s:l.service_interest||'',
+      p:l.estimated_value||0,src:l.source||'',tel:l.phone||'',
+      d:fmtRelDate(l.created_at),rep:USER_NAMES[l.owner_id]||'',
     })),
   }));
 }
@@ -454,13 +460,14 @@ async function loadRepPipe(key){
   const uname=REP_USERNAME[key];
   let data;
   if(uname){
-    const res=await supa(()=>db.from('leads').select('*').eq('rep_username',uname).order('created_at',{ascending:false}));
+    const uid=USER_DB_IDS[uname];
+    const res=uid?await supa(()=>db.from('leads').select('*').eq('owner_id',uid).order('created_at',{ascending:false})):null;
     if(res&&res.data&&res.data.length){
       const d2dStages=['new','contact','interesse','devis','closed-v','closed-g','nextyear','lost'];
       data=d2dStages.map(sid=>{
         const sc=STAGE_CONFIG.find(s=>s.id===sid);
         return{...sc,title:sc.title.replace('Attempted Contact','À rappeler').replace('Intéressé / Semi-close','Semi-close'),
-          deals:res.data.filter(l=>l.stage===sid).map(l=>({_id:l.id,n:l.name,s:l.service||'',p:l.price||0,d:fmtRelDate(l.created_at)}))};
+          deals:res.data.filter(l=>l.pipeline_stage===sid).map(l=>({_id:l.id,n:l.full_name||'',s:l.service_interest||'',p:l.estimated_value||0,d:fmtRelDate(l.created_at)}))};
       });
     }
   }
@@ -473,13 +480,13 @@ async function loadPersoPipe(user){
   if(user.role==='tech'){
     data=[{id:'t1',title:'À rappeler',color:'#f59e0b',deals:[{n:'Famille Simard',s:'Fenêtres ext.',p:280,d:'Auj.'},{n:'Bergeron',s:'Fenêtres int/ext',p:395,d:'Hier'}]},{id:'t2',title:'Soumission',color:'#3aafb0',deals:[{n:'Résidence Lapointe',s:'Fenêtres ext.',p:210,d:'13 avr'}]},{id:'t3',title:'Closé',color:'#22c55e',deals:[{n:'Famille Charron',s:'Fenêtres ext.',p:230,d:'12 avr'}]},{id:'t4',title:'Pas intéressé',color:'#ef4444',deals:[]}];
   } else {
-    const uname=user.username;
-    const res=await supa(()=>db.from('leads').select('*').eq('rep_username',uname).order('created_at',{ascending:false}));
+    const uid=curUser?.db_id;
+    const res=uid?await supa(()=>db.from('leads').select('*').eq('owner_id',uid).order('created_at',{ascending:false})):null;
     if(res&&res.data&&res.data.length){
       const stages=['new','contact','interesse','devis','closed-v','lost'];
       data=stages.map(sid=>{
         const sc=STAGE_CONFIG.find(s=>s.id===sid);
-        return{...sc,deals:res.data.filter(l=>l.stage===sid).map(l=>({_id:l.id,n:l.name,s:l.service||'',p:l.price||0,d:fmtRelDate(l.created_at)}))};
+        return{...sc,deals:res.data.filter(l=>l.pipeline_stage===sid).map(l=>({_id:l.id,n:l.full_name||'',s:l.service_interest||'',p:l.estimated_value||0,d:fmtRelDate(l.created_at)}))};
       });
     } else {
       const k=user.name==='Marc Yankov'?'marc_y':user.name==='Maxime Santander'?'maxime_s':user.name==='Will Lowe'?'willl':'nathan';
@@ -517,7 +524,7 @@ function buildPipeBoard(containerId,data,onSelect){
 function buildPipeMW(){loadPipeMW()}
 function buildRepPipe(key){
   if(key==='all'){
-    supa(()=>db.from('leads').select('*').not('rep_username','is',null).order('created_at',{ascending:false})).then(res=>{
+    supa(()=>db.from('leads').select('*').not('owner_id','is',null).order('created_at',{ascending:false})).then(res=>{
       const data=(res&&res.data&&res.data.length)?leadsToColumns(res.data):Object.values(FB_PIPE_REPS).flat();
       buildPipeBoard('pipe-reps',data);
     });
@@ -585,8 +592,8 @@ function sendSMS(){const i=document.getElementById('sms-inp');if(i.value.trim())
 // ════════════════════════════════════════════
 async function loadAdminComm(){
   const repRes=await supa(()=>db.from('commissions')
-    .select('*').eq('type','rep').eq('week_of',weekStart()).order('sales_amount',{ascending:false}));
-  const repsData=repRes?.data;
+    .select('*').eq('type','rep').eq('week_start',weekStart()).order('commission_amount',{ascending:false}));
+  const repsData=repRes?.data?.map(r=>({...r,username:Object.keys(USER_DB_IDS).find(k=>USER_DB_IDS[k]===r.user_id)||'',name:USER_NAMES[r.user_id]||'',sales_amount:r.base_amount||0,bonus:r.bonus_amount||0,paid:r.status==='paid'}));
   const repsEl=document.getElementById('comm-reps-list');
   if(repsEl){
     const reps=repsData&&repsData.length?repsData:[
@@ -610,10 +617,11 @@ async function loadAdminComm(){
   }
 
   const techRes=await supa(()=>db.from('commissions')
-    .select('*').eq('type','tech').eq('week_of',weekStart()).order('commission_amount',{ascending:false}));
+    .select('*').eq('type','tech').eq('week_start',weekStart()).order('commission_amount',{ascending:false}));
   const techEl=document.getElementById('comm-tech-list');
   if(techEl){
-    const techs=techRes?.data&&techRes.data.length?techRes.data:[
+    const techRaw=techRes?.data?.map(r=>({...r,username:Object.keys(USER_DB_IDS).find(k=>USER_DB_IDS[k]===r.user_id)||'',name:USER_NAMES[r.user_id]||'',sales_amount:r.base_amount||0,paid:r.status==='paid'}));
+    const techs=techRaw&&techRaw.length?techRaw:[
       {id:'fb-tech-victor', username:'victor.mathieu', name:'Victor Mathieu',  jobs_count:11,sales_amount:3865,commission_amount:696,paid:true},
       {id:'fb-tech-manuel', username:'manuel.martinez',name:'Manuel Martinez', jobs_count:9, sales_amount:3230,commission_amount:581,paid:true},
       {id:'fb-tech-maxime', username:'maxime.jeffrey', name:'Maxime Jeffrey',  jobs_count:7, sales_amount:2450,commission_amount:441,paid:false},
@@ -641,22 +649,23 @@ function buildAdminComm(){loadAdminComm()}
 async function loadGazonList(){
   const el=document.getElementById('gazon-list');if(!el)return;
   const res=await supa(()=>db.from('timesheets')
-    .select('*').gte('date',weekStart()).order('user_name').order('date'));
+    .select('*').gte('punch_in',weekStart()+'T00:00:00').order('user_id').order('punch_in'));
   let emps;
   if(res?.data&&res.data.length){
     const byUser={};
     for(const row of res.data){
-      const k=row.user_name||row.user_id;
-      if(!byUser[k])byUser[k]={id:row.user_id||k,name:row.user_name||k,paid:row.paid,rows:[]};
+      const k=row.user_id;
+      const uname=USER_NAMES[k]||k;
+      if(!byUser[k])byUser[k]={id:k,name:uname,paid:row.paid,rows:[]};
       byUser[k].rows.push(row);
     }
     emps=Object.values(byUser).map(u=>{
       const days=u.rows.map(r=>({
-        j:fmtDate(r.date||r.clock_in),
-        in:fmtTime(r.clock_in),
-        out:fmtTime(r.clock_out),
-        h:parseFloat(r.hours||0),
-        jobs:r.job_note||r.jobs||'',
+        j:fmtDate(r.punch_in),
+        in:fmtTime(r.punch_in),
+        out:fmtTime(r.punch_out),
+        h:parseFloat(r.hours_worked||0),
+        jobs:'',
         _id:r.id,paid:r.paid,
       }));
       return{id:u.id,name:u.name,days,paid:u.rows.some(r=>r.paid)};
@@ -702,8 +711,9 @@ async function markPaid(id,username,btn){
   btn.textContent='Payé ✓';btn.className='btn btn-pay paid';btn.disabled=true;
   const badge=document.getElementById('badge-'+id);
   if(badge){badge.className='badge bg';badge.textContent='Payé ✓'}
-  await supa(()=>db.from('commissions').update({paid:true,paid_at:new Date().toISOString()})
-    .eq('username',username).eq('week_of',weekStart()));
+  const uid=USER_DB_IDS[username];
+  if(uid)await supa(()=>db.from('commissions').update({status:'paid',paid_at:new Date().toISOString()})
+    .eq('user_id',uid).eq('week_start',weekStart()));
   toast('✓ Paiement enregistré — l\'employé voit Payé ✓ de son côté');
 }
 
@@ -712,8 +722,9 @@ async function markGazon(empId,empName,btn){
   btn.textContent='Payé ✓';btn.className='btn btn-pay paid';btn.disabled=true;
   const badge=document.getElementById('gbadge-'+empId);
   if(badge){badge.className='badge bg';badge.textContent='Payé ✓'}
+  const uid=Object.keys(USER_NAMES).find(k=>USER_NAMES[k]===empName)||empId;
   await supa(()=>db.from('timesheets').update({paid:true,paid_at:new Date().toISOString()})
-    .eq('user_name',empName).gte('date',weekStart()));
+    .eq('user_id',uid).gte('punch_in',weekStart()+'T00:00:00'));
   toast('✓ Paiement enregistré — '+empName+' voit Payé ✓ de son côté');
 }
 
@@ -726,15 +737,16 @@ async function loadPersonalComm(user){
   if(!el)return;
   if(t)t.textContent='Mes commissions — '+user.name;
 
-  const res=await supa(()=>db.from('commissions')
-    .select('*').eq('username',user.username).eq('week_of',weekStart()).maybeSingle());
+  const uid=curUser?.db_id;
+  const res=uid?await supa(()=>db.from('commissions')
+    .select('*').eq('user_id',uid).eq('week_start',weekStart()).maybeSingle()):null;
   const c=res?.data;
 
   if(user.role==='tech'){
     const jobs=c?.jobs_count||8;
-    const rev=c?.sales_amount||2840;
+    const rev=c?.base_amount||c?.sales_amount||2840;
     const comm=c?.commission_amount||Math.round(rev*0.18);
-    const paid=c?.paid||false;
+    const paid=c?.status==='paid'||false;
     el.innerHTML=`<div class="comm-sec">
       <div style="display:flex;justify-content:space-between;margin-bottom:12px">
         <div><div style="font-size:14px;font-weight:800">${user.name}</div><div style="font-size:11px;color:var(--tx4)">Technicien fenêtres · 18% par job assigné</div></div>
@@ -747,10 +759,10 @@ async function loadPersonalComm(user){
       </div>
     </div>`;
   } else {
-    const ventes=c?.sales_amount||(user.role==='lead'?1820:2340);
+    const ventes=c?.base_amount||c?.sales_amount||(user.role==='lead'?1820:2340);
     const comm=c?.commission_amount||(user.role==='lead'?419:304);
     const role_label=user.role==='lead'?'Lead · Pipeline+D2D+2% override':'Rep terrain D2D';
-    el.innerHTML=commCard(user.name,role_label,ventes,comm,c?.paid);
+    el.innerHTML=commCard(user.name,role_label,ventes,comm,c?.status==='paid'||false);
   }
 }
 function buildPersonalComm(user){loadPersonalComm(user)}
@@ -782,14 +794,15 @@ async function loadPersonalPaye(user){
   const t=document.getElementById('paye-t');
   if(!el)return;
 
-  const res=await supa(()=>db.from('timesheets')
-    .select('*').eq('user_name',user.name).gte('date',weekStart()).order('date'));
+  const uid2=curUser?.db_id;
+  const res=uid2?await supa(()=>db.from('timesheets')
+    .select('*').eq('user_id',uid2).gte('punch_in',weekStart()+'T00:00:00').order('punch_in')):null;
   let days,totalH,paid=false;
   if(res?.data&&res.data.length){
     days=res.data.map(r=>({
-      j:fmtDate(r.date||r.clock_in),
-      in:fmtTime(r.clock_in),out:fmtTime(r.clock_out),
-      h:parseFloat(r.hours||0),jobs:r.job_note||'',paid:r.paid,
+      j:fmtDate(r.punch_in),
+      in:fmtTime(r.punch_in),out:fmtTime(r.punch_out),
+      h:parseFloat(r.hours_worked||0),jobs:'',paid:r.paid,
     }));
     totalH=days.reduce((s,d)=>s+d.h,0);
     paid=res.data.some(r=>r.paid);
@@ -833,7 +846,7 @@ async function loadSousHist(user){
   if(!el)return;
   const isAdmin=user.role==='admin'||user.role==='lead';
   const q=db.from('quotes').select('*').order('created_at',{ascending:false}).limit(20);
-  if(!isAdmin)q.eq('rep_username',user.username);
+  if(!isAdmin&&curUser?.db_id)q.eq('created_by',curUser.db_id);
   const res=await supa(()=>q);
   if(res?.data&&res.data.length){
     if(tEl)tEl.textContent=isAdmin?'Toutes les soumissions':'Mes soumissions récentes';
@@ -844,9 +857,9 @@ async function loadSousHist(user){
           const sl=q.status==='signed'?'Signé':q.status==='sent'?'Envoyé':'Brouillon';
           return`<div class="tr" style="grid-template-columns:1fr 50px 80px 60px 45px">
             <div><div class="tn">${esc(q.client_name||'')}</div><div class="tsm">${fmtRelDate(q.created_at)}</div></div>
-            <span style="font-size:10px;font-weight:700;color:var(--td)">${esc(q.rep_name||'')}</span>
-            <span class="badge bt" style="font-size:9px">${esc(q.service_type||'')}</span>
-            <span style="font-weight:700;color:var(--teal);font-size:11px">$${(q.price||0).toLocaleString()}</span>
+            <span style="font-size:10px;font-weight:700;color:var(--td)">${esc(q.rep_name||USER_NAMES[q.created_by]||'')}</span>
+            <span class="badge bt" style="font-size:9px">${esc(q.service_type||q.service||'')}</span>
+            <span style="font-weight:700;color:var(--teal);font-size:11px">$${(q.price||q.amount||0).toLocaleString()}</span>
             <span class="badge ${st}">${sl}</span>
           </div>`;
         }).join('');
@@ -856,9 +869,9 @@ async function loadSousHist(user){
           const st=q.status==='signed'?'bg':q.status==='sent'?'ba':'bx';
           const sl=q.status==='signed'?'Signé':q.status==='sent'?'Envoyé':'Brouillon';
           return`<div class="tr" style="grid-template-columns:1fr 80px 60px 45px">
-            <div><div class="tn">${esc(q.client_name||'')}</div><div class="tsm">${fmtRelDate(q.created_at)}</div></div>
-            <span class="badge bt" style="font-size:9px">${esc(q.service_type||'')}</span>
-            <span style="font-weight:700;color:var(--teal);font-size:11px">$${(q.price||0).toLocaleString()}</span>
+            <div><div class="tn">${esc(q.client_name||'Client')}</div><div class="tsm">${fmtRelDate(q.created_at)}</div></div>
+            <span class="badge bt" style="font-size:9px">${esc(q.service_type||q.service||'')}</span>
+            <span style="font-weight:700;color:var(--teal);font-size:11px">$${(q.price||q.amount||0).toLocaleString()}</span>
             <span class="badge ${st}">${sl}</span>
           </div>`;
         }).join('');
@@ -903,8 +916,8 @@ async function subSous(type){
   const notes=notesTA?.value||'';
   const status=type==='devis'?'sent':'signed';
   await supa(()=>db.from('quotes').insert({
-    client_name:clientName,service_type:svcType,plan:plan||null,price,notes,status,
-    type,rep_username:curUser?.username,rep_name:curUser?.name,
+    service:svcType,plan_type:plan||null,amount:price,notes,status,
+    service_category:type,created_by:curUser?.db_id||null,
     created_at:new Date().toISOString(),
   }));
   ok.textContent=type==='devis'?'✓ Devis créé dans QuickBooks!':'✓ Facture créée dans QuickBooks!';
@@ -918,17 +931,18 @@ async function subSous(type){
 async function loadClockStatus(user){
   if(user.role!=='terrain'&&!(user.role==='rep'&&user.secondary==='terrain'))return;
   const today=new Date().toISOString().slice(0,10);
-  const res=await supa(()=>db.from('timesheets')
-    .select('*').eq('user_name',user.name).eq('date',today).maybeSingle());
+  const uid3=curUser?.db_id;
+  const res=uid3?await supa(()=>db.from('timesheets')
+    .select('*').eq('user_id',uid3).gte('punch_in',today+'T00:00:00').lt('punch_in',today+'T23:59:59').maybeSingle()):null;
   const s=document.getElementById('clock-status');if(!s)return;
   if(res?.data){
     const row=res.data;
     curClockId=row.id;
-    if(row.clock_in&&!row.clock_out){
-      clockedIn=true;clockInTime=new Date(row.clock_in);
-      s.textContent='Arrivée pointée à '+fmtTime(row.clock_in);s.style.color='var(--green)';
-    } else if(row.clock_in&&row.clock_out){
-      s.textContent='Journée terminée — '+fmtTime(row.clock_in)+' → '+fmtTime(row.clock_out)+' ('+row.hours+'h)';
+    if(row.punch_in&&!row.punch_out){
+      clockedIn=true;clockInTime=new Date(row.punch_in);
+      s.textContent='Arrivée pointée à '+fmtTime(row.punch_in);s.style.color='var(--green)';
+    } else if(row.punch_in&&row.punch_out){
+      s.textContent='Journée terminée — '+fmtTime(row.punch_in)+' → '+fmtTime(row.punch_out)+' ('+row.hours_worked+'h)';
       s.style.color='var(--tx4)';clockedIn=false;
     }
   }
@@ -943,8 +957,8 @@ async function doPunch(type){
     clockedIn=true;clockInTime=now;
     s.textContent='Arrivée pointée à '+t;s.style.color='var(--green)';
     const res=await supa(()=>db.from('timesheets').insert({
-      user_name:curUser.name,user_username:curUser.username,
-      clock_in:now.toISOString(),date:now.toISOString().slice(0,10),paid:false,
+      user_id:curUser.db_id,
+      punch_in:now.toISOString(),week_start:weekStart(),paid:false,
     }).select().single());
     if(res?.data)curClockId=res.data.id;
     toast('✓ Clock in enregistré à '+t);
@@ -955,7 +969,7 @@ async function doPunch(type){
     const hDisp=Math.floor(h)+'h'+(diff%60>0?(diff%60)+'min':'');
     s.textContent='Départ à '+t+' · '+hDisp+' travaillé';s.style.color='var(--tx4)';clockedIn=false;
     if(curClockId){
-      await supa(()=>db.from('timesheets').update({clock_out:now.toISOString(),hours:h}).eq('id',curClockId));
+      await supa(()=>db.from('timesheets').update({punch_out:now.toISOString(),hours_worked:h}).eq('id',curClockId));
     }
     toast('✓ Clock out — '+hDisp+' enregistré');
     if(curUser)loadPersonalPaye(curUser);
@@ -986,8 +1000,8 @@ async function confirmNL(){
   const service=svcSel?.value||'';
   if(!name){toast('Nom requis',true);return}
   const res=await supa(()=>db.from('leads').insert({
-    name,phone,source,service,stage:'new',
-    rep_username:curUser?.username,rep_name:curUser?.name,
+    full_name:name,phone,source,service_interest:service,pipeline_stage:'new',
+    owner_id:curUser?.db_id||null,
     created_at:new Date().toISOString(),
   }).select().single());
   document.getElementById('nl-ok').style.display='block';
@@ -1011,8 +1025,8 @@ function setupRealtime(user){
     const ch=db.channel('crm-live')
       .on('postgres_changes',{event:'UPDATE',schema:'public',table:'commissions'},(payload)=>{
         const c=payload.new;
-        if(c.paid){
-          if(c.username===user.username){
+        if(c.status==='paid'||c.paid){
+          if(c.user_id===curUser?.db_id||c.username===user.username){
             const ps=document.getElementById('paye-status-personal');
             if(ps){ps.className='badge bg';ps.style.fontSize='13px';ps.style.padding='4px 12px';ps.textContent='Paiement reçu ✓'}
             toast('✓ Ton paiement a été enregistré!');
@@ -1022,7 +1036,7 @@ function setupRealtime(user){
       })
       .on('postgres_changes',{event:'UPDATE',schema:'public',table:'timesheets'},(payload)=>{
         const r=payload.new;
-        if(r.paid&&r.user_name===user.name){
+        if(r.paid&&r.user_id===curUser?.db_id){
           const ps=document.getElementById('paye-status-personal');
           if(ps){ps.className='badge bg';ps.style.fontSize='13px';ps.style.padding='4px 12px';ps.textContent='Paiement reçu ✓'}
           toast('✓ Ta paye a été envoyée!');
