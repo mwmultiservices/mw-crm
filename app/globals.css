@@ -1,0 +1,103 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@theme {
+  --color-mw-primary: #69C9CA;
+  --color-mw-primary-dark: #4AADAE;
+  --color-mw-primary-light: #E8F8F8;
+  --color-mw-black: #000000;
+  --color-mw-white: #FFFFFF;
+  --color-mw-gray-bg: #F1F2F2;
+  --color-mw-gray-border: #E5E7EB;
+  --color-mw-gray-text: #6B7280;
+  --color-mw-gray-dark: #1F2937;
+  --color-mw-olive: #697035;
+  --color-mw-copper: #8D5D36;
+  --color-mw-success: #10B981;
+  --color-mw-warning: #F59E0B;
+  --color-mw-danger: #EF4444;
+}
+
+:root {
+  --mw-primary: #69C9CA;
+  --mw-primary-dark: #4AADAE;
+  --mw-primary-light: #E8F8F8;
+  --mw-primary-rgb: 105, 201, 202;
+
+  --mw-black: #000000;
+  --mw-white: #FFFFFF;
+  --mw-gray-bg: #F1F2F2;
+  --mw-gray-border: #E5E7EB;
+  --mw-gray-text: #6B7280;
+  --mw-gray-dark: #1F2937;
+
+  --mw-olive: #697035;
+  --mw-copper: #8D5D36;
+
+  --mw-success: #10B981;
+  --mw-warning: #F59E0B;
+  --mw-danger: #EF4444;
+}
+
+* {
+  -webkit-tap-highlight-color: transparent;
+  box-sizing: border-box;
+}
+
+html, body {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  font-family: 'Inter', sans-serif;
+}
+
+/* ───────── Shell applicatif (sidebar desktop + bottom-nav mobile) ───────── */
+.mw-shell {
+  display: flex;
+  height: 100vh;
+  background: var(--mw-gray-bg);
+}
+.mw-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+}
+.mw-content {
+  flex: 1;
+  overflow: auto;
+}
+
+/* Sidebar — cachée en mobile */
+.mw-sidebar { display: none; }
+
+/* Bottom-nav — visible en mobile */
+.mw-bottomnav {
+  display: flex;
+  background: #000;
+  border-top: 1px solid rgba(255,255,255,0.08);
+  padding-bottom: env(safe-area-inset-bottom);
+  flex-shrink: 0;
+}
+.mw-header-mobile { display: flex; }
+
+@media (min-width: 1024px) {
+  .mw-sidebar {
+    display: flex;
+    flex-direction: column;
+    width: 232px;
+    flex-shrink: 0;
+    background: #000;
+    color: #fff;
+    border-right: 1px solid rgba(255,255,255,0.08);
+    overflow-y: auto;
+  }
+  .mw-bottomnav { display: none; }
+  .mw-header-mobile { display: none; }
+}
+
+@keyframes mw-spin { to { transform: rotate(360deg); } }
