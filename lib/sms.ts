@@ -28,6 +28,19 @@ export function twilioConfigured(): boolean {
   )
 }
 
+// Normalise un numéro nord-américain en E.164 (+1XXXXXXXXXX), format exigé
+// par Twilio. Les numéros en DB sont souvent en '514-555-1234' / '(514) 555-1234'.
+// Renvoie null si le numéro est inexploitable.
+export function toE164(raw: string | null | undefined): string | null {
+  if (!raw) return null
+  const trimmed = raw.trim()
+  if (trimmed.startsWith('+')) return '+' + trimmed.slice(1).replace(/\D/g, '')
+  const digits = trimmed.replace(/\D/g, '')
+  if (digits.length === 10) return '+1' + digits
+  if (digits.length === 11 && digits.startsWith('1')) return '+' + digits
+  return null
+}
+
 export async function sendSms({ lead_id, message, phone, auto = false }: SendSmsInput): Promise<SendSmsResult> {
   const msg = (message || '').trim()
   if (!msg) return { ok: false, twilioConfigured: false, error: 'Message vide' }
@@ -37,12 +50,13 @@ export async function sendSms({ lead_id, message, phone, auto = false }: SendSms
   const from = process.env.TWILIO_PHONE_NUMBER
   const configured = twilioConfigured()
 
+  const to = toE164(phone)
   let twilioSid: string | null = null
-  let status = configured ? 'sent' : auto ? 'auto-stub' : 'stub'
+  let status = configured ? (to ? 'sent' : 'invalid-phone') : auto ? 'auto-stub' : 'stub'
 
-  if (configured && phone) {
+  if (configured && to) {
     try {
-      const params = new URLSearchParams({ To: phone, From: from!, Body: msg })
+      const params = new URLSearchParams({ To: to, From: from!, Body: msg })
       const res = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${sid}/Messages.json`, {
         method: 'POST',
         headers: {
