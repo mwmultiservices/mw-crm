@@ -2,6 +2,7 @@
 import { useState } from 'react'
 import { ChevronDown, ChevronUp } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
+import { ROLE_OPTIONS, roleLabel, type Role } from '@/lib/roles'
 import ColorPicker from './ColorPicker'
 import CommissionEditor from './CommissionEditor'
 
@@ -11,6 +12,7 @@ export interface Employee {
   email: string
   phone?: string | null
   color?: string | null
+  role?: string | null
   commission_type?: string | null
   commission_value?: number | null
 }
@@ -46,20 +48,28 @@ const SaveBtn = ({ saving, saved, onClick }: { saving: boolean; saved: boolean; 
 export default function EmployeeCard({ employee, usedColors, onUpdated }: Props) {
   const [expanded, setExpanded] = useState(false)
   const [color, setColor] = useState(employee.color || '#69C9CA')
+  const [role, setRole] = useState<string>(employee.role || 'rep')
   const [commType, setCommType] = useState<'percent' | 'fixed'>(
     (employee.commission_type as 'percent' | 'fixed') || 'percent'
   )
   const [commValue, setCommValue] = useState(employee.commission_value ?? 0)
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
   const handleSave = async () => {
     setSaving(true)
-    await supabase
+    setError(null)
+    const { error: err } = await supabase
       .from('profiles')
-      .update({ color, commission_type: commType, commission_value: commValue })
+      .update({ color, role, commission_type: commType, commission_value: commValue })
       .eq('id', employee.id)
     setSaving(false)
+    if (err) {
+      // Le trigger protect_profile_fields rejette si l'utilisateur n'est pas admin.
+      setError(err.message || 'Modification refusée')
+      return
+    }
     setSaved(true)
     setTimeout(() => setSaved(false), 2500)
     onUpdated()
@@ -116,6 +126,13 @@ export default function EmployeeCard({ employee, usedColors, onUpdated }: Props)
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
           <span style={{
+            background: '#EEF2FF', color: '#4338CA',
+            fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 999,
+            textTransform: 'uppercase', letterSpacing: '0.04em',
+          }}>
+            {roleLabel(role)}
+          </span>
+          <span style={{
             background: '#E8F8F8', color: '#0D6E6F',
             fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 999,
           }}>
@@ -129,6 +146,28 @@ export default function EmployeeCard({ employee, usedColors, onUpdated }: Props)
       {expanded && (
         <div style={{ borderTop: '1px solid #F3F4F6', padding: '16px' }}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+            <div>
+              <p style={{ color: '#374151', fontWeight: 600, fontSize: 12, margin: '0 0 10px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                Rôle
+              </p>
+              <select
+                value={role}
+                onChange={e => setRole(e.target.value as Role)}
+                style={{
+                  width: '100%', border: '1px solid #E5E7EB', borderRadius: 8,
+                  padding: '10px 12px', fontSize: 15, color: '#1F2937',
+                  fontFamily: 'Inter, sans-serif', outline: 'none', background: '#FFFFFF',
+                  boxSizing: 'border-box', cursor: 'pointer',
+                }}
+              >
+                {ROLE_OPTIONS.map(o => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </select>
+              <p style={{ color: '#9CA3AF', fontSize: 11, margin: '6px 0 0' }}>
+                Détermine les sections et permissions de l&apos;employé.
+              </p>
+            </div>
             <div>
               <p style={{ color: '#374151', fontWeight: 600, fontSize: 12, margin: '0 0 10px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
                 Couleur terrain
@@ -145,6 +184,14 @@ export default function EmployeeCard({ employee, usedColors, onUpdated }: Props)
                 onChange={(t, v) => { setCommType(t); setCommValue(v) }}
               />
             </div>
+            {error && (
+              <p style={{
+                background: '#FEF2F2', color: '#B91C1C', fontSize: 12, fontWeight: 500,
+                border: '1px solid #FECACA', borderRadius: 8, padding: '8px 10px', margin: 0,
+              }}>
+                {error}
+              </p>
+            )}
             <SaveBtn saving={saving} saved={saved} onClick={handleSave} />
           </div>
         </div>
