@@ -203,6 +203,32 @@ function QuoteModal({
   const [notes, setNotes] = useState(quote?.notes ?? '')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  const [qbSending, setQbSending] = useState(false)
+  const [qbSent, setQbSent] = useState(!!quote?.quickbooks_id)
+  const [qbMsg, setQbMsg] = useState<{ ok: boolean; text: string } | null>(null)
+
+  const sendToQb = async () => {
+    if (!quote) return
+    setQbSending(true); setQbMsg(null)
+    try {
+      const res = await fetch('/api/quickbooks/push', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ quoteId: quote.id }),
+      })
+      const j = await res.json()
+      if (j.ok) {
+        setQbSent(true)
+        setQbMsg({ ok: true, text: `✓ ${j.entity === 'Invoice' ? 'Facture' : 'Devis'} créé dans QuickBooks${j.docNumber ? ` (#${j.docNumber})` : ''}.` })
+      } else {
+        if (j.already) setQbSent(true)
+        setQbMsg({ ok: false, text: j.error || 'Échec de l’envoi.' })
+      }
+    } catch {
+      setQbMsg({ ok: false, text: 'Erreur réseau.' })
+    } finally {
+      setQbSending(false)
+    }
+  }
 
   const save = async () => {
     if (!clientName.trim()) { setError('Nom du client requis.'); return }
@@ -275,6 +301,22 @@ function QuoteModal({
           <Field label="Notes"><textarea value={notes} onChange={(e) => setNotes(e.target.value)} style={{ ...inp, minHeight: 54, resize: 'vertical' }} /></Field>
           {error && <div style={{ color: '#991B1B', fontSize: 13 }}>{error}</div>}
         </div>
+
+        {manager && isEdit && (
+          <div style={{ marginTop: 16, paddingTop: 14, borderTop: '1px solid #F3F4F6' }}>
+            {qbSent ? (
+              <div style={{ fontSize: 13, fontWeight: 600, color: '#2CA01C' }}>✓ Envoyée dans QuickBooks</div>
+            ) : (
+              <button onClick={sendToQb} disabled={qbSending} style={{
+                ...primaryBtn, width: '100%', justifyContent: 'center',
+                background: '#2CA01C', color: '#FFF', opacity: qbSending ? 0.6 : 1,
+              }}>{qbSending ? 'Envoi…' : 'Envoyer vers QuickBooks'}</button>
+            )}
+            {qbMsg && <div style={{ marginTop: 8, fontSize: 12, color: qbMsg.ok ? '#047857' : '#991B1B' }}>{qbMsg.text}</div>}
+            {!qbSent && <div style={{ marginTop: 6, fontSize: 11, color: '#9CA3AF' }}>Envoie les valeurs enregistrées (enregistre d’abord tes modifications).</div>}
+          </div>
+        )}
+
         <div style={{ display: 'flex', gap: 8, marginTop: 18, alignItems: 'center' }}>
           {isEdit && (
             <button onClick={remove} disabled={saving} aria-label="Supprimer" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 40, height: 40, borderRadius: 10, border: '1px solid #FCA5A5', background: '#FEF2F2', color: '#DC2626', cursor: 'pointer' }}><Trash2 size={17} /></button>
