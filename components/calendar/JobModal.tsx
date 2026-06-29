@@ -6,6 +6,7 @@ import { Trash2, Navigation } from 'lucide-react'
 
 interface Props {
   kind: 'fenetre' | 'paysagement'
+  canEdit?: boolean
   lanes: Lane[]
   assignProfiles: AssignProfile[]
   // création
@@ -32,8 +33,9 @@ function buildISO(date: string, time: string): string | null {
   return new Date(`${date}T${time}`).toISOString()
 }
 
-export default function JobModal({ kind, lanes, assignProfiles, initialDate, initialTeam, job, onClose, onSaved }: Props) {
+export default function JobModal({ kind, canEdit = true, lanes, assignProfiles, initialDate, initialTeam, job, onClose, onSaved }: Props) {
   const isEdit = !!job
+  const ro = !canEdit // lecture seule (employés non-admin)
 
   const [type, setType] = useState(job?.type ?? (kind === 'fenetre' ? 'fenetre' : 'gazon'))
   const [title, setTitle] = useState(job ? (clientName(job) || job.title || '') : '')
@@ -93,9 +95,9 @@ export default function JobModal({ kind, lanes, assignProfiles, initialDate, ini
   return (
     <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', zIndex: 60, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
       <div onClick={(e) => e.stopPropagation()} style={{ background: '#FFF', borderRadius: 14, padding: 20, width: 'min(460px, 100%)', maxHeight: '90vh', overflowY: 'auto', fontFamily: 'Inter, sans-serif' }}>
-        <h2 style={{ fontSize: 18, fontWeight: 700, color: '#111827', margin: '0 0 16px' }}>{isEdit ? 'Modifier le job' : 'Nouveau job'}</h2>
+        <h2 style={{ fontSize: 18, fontWeight: 700, color: '#111827', margin: '0 0 16px' }}>{ro ? 'Détails du job' : isEdit ? 'Modifier le job' : 'Nouveau job'}</h2>
 
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <fieldset disabled={ro} style={{ display: 'flex', flexDirection: 'column', gap: 10, border: 'none', padding: 0, margin: 0, minInlineSize: 'auto' }}>
           {kind === 'paysagement' && (
             <Field label="Type">
               <div style={{ display: 'flex', gap: 8 }}>
@@ -184,16 +186,22 @@ export default function JobModal({ kind, lanes, assignProfiles, initialDate, ini
           <Field label="Notes"><textarea value={notes} onChange={(e) => setNotes(e.target.value)} style={{ ...inp, minHeight: 54, resize: 'vertical' }} /></Field>
 
           {error && <div style={{ color: '#991B1B', fontSize: 13 }}>{error}</div>}
-        </div>
+        </fieldset>
 
         <div style={{ display: 'flex', gap: 8, marginTop: 18, alignItems: 'center' }}>
-          {isEdit && (
-            <button onClick={remove} disabled={saving} aria-label="Supprimer" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 40, height: 40, borderRadius: 10, border: '1px solid #FCA5A5', background: '#FEF2F2', color: '#DC2626', cursor: 'pointer' }}>
-              <Trash2 size={17} />
-            </button>
+          {ro ? (
+            <button onClick={onClose} style={{ ...primaryBtn, flex: 1 }}>Fermer</button>
+          ) : (
+            <>
+              {isEdit && (
+                <button onClick={remove} disabled={saving} aria-label="Supprimer" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 40, height: 40, borderRadius: 10, border: '1px solid #FCA5A5', background: '#FEF2F2', color: '#DC2626', cursor: 'pointer' }}>
+                  <Trash2 size={17} />
+                </button>
+              )}
+              <button onClick={onClose} style={{ ...primaryBtn, background: '#F3F4F6', color: '#374151', flex: 1 }}>Annuler</button>
+              <button onClick={save} disabled={saving} style={{ ...primaryBtn, flex: 1, opacity: saving ? 0.6 : 1 }}>{saving ? '…' : isEdit ? 'Enregistrer' : 'Créer'}</button>
+            </>
           )}
-          <button onClick={onClose} style={{ ...primaryBtn, background: '#F3F4F6', color: '#374151', flex: 1 }}>Annuler</button>
-          <button onClick={save} disabled={saving} style={{ ...primaryBtn, flex: 1, opacity: saving ? 0.6 : 1 }}>{saving ? '…' : isEdit ? 'Enregistrer' : 'Créer'}</button>
         </div>
       </div>
     </div>

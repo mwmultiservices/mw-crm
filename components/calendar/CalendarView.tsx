@@ -102,7 +102,7 @@ export default function CalendarView({ kind }: { kind: 'fenetre' | 'paysagement'
           currentUserId={userId}
           canEdit={canEdit}
           onAddJob={(dateISO, laneId) => setModal({ date: dateISO.slice(0, 10), team: laneId })}
-          onJobClick={(job) => (canEdit ? setModal({ job }) : undefined)}
+          onJobClick={(job) => setModal({ job })}
         />
       )}
 
@@ -113,6 +113,7 @@ export default function CalendarView({ kind }: { kind: 'fenetre' | 'paysagement'
       {modal && (
         <JobModal
           kind={kind}
+          canEdit={canEdit}
           lanes={LANES}
           assignProfiles={assignProfiles}
           initialDate={modal.date}
