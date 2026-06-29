@@ -1,6 +1,6 @@
 'use client'
-import { Plus } from 'lucide-react'
-import { clientName, type Job } from '@/lib/queries/calendar'
+import { Plus, Navigation } from 'lucide-react'
+import { clientName, jobDirectionsUrl, type Job } from '@/lib/queries/calendar'
 
 export interface Lane { id: string; label: string; color: string }
 export interface ProfileMini { full_name: string | null; color: string | null }
@@ -86,16 +86,32 @@ export default function WeekCalendar({
                           const mine = !!currentUserId && job.assigned_ids?.includes(currentUserId)
                           const done = job.status === 'done'
                           const canceled = job.status === 'canceled'
+                          const gpsUrl = jobDirectionsUrl(job)
                           return (
-                            <button key={job.id} onClick={() => onJobClick(job)} style={{
+                            <div key={job.id} role="button" tabIndex={0} onClick={() => onJobClick(job)} style={{
                               textAlign: 'left', border: `1px solid ${mine ? lane.color : '#E5E7EB'}`,
                               borderLeft: `3px solid ${lane.color}`, borderRadius: 8, background: mine ? lane.color + '12' : '#FFF',
                               padding: 8, cursor: 'pointer', opacity: canceled ? 0.5 : 1,
                             }}>
-                              <div style={{ fontSize: 11, fontWeight: 700, color: '#374151' }}>
-                                {fmtTime(job.start_at)}{job.end_at ? `–${fmtTime(job.end_at)}` : ''}
-                                {done && <span style={{ marginLeft: 6, color: '#10B981' }}>✓</span>}
-                                {canceled && <span style={{ marginLeft: 6, textDecoration: 'line-through' }}>annulé</span>}
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                <div style={{ fontSize: 11, fontWeight: 700, color: '#374151' }}>
+                                  {fmtTime(job.start_at)}{job.end_at ? `–${fmtTime(job.end_at)}` : ''}
+                                  {done && <span style={{ marginLeft: 6, color: '#10B981' }}>✓</span>}
+                                  {canceled && <span style={{ marginLeft: 6, textDecoration: 'line-through' }}>annulé</span>}
+                                </div>
+                                {gpsUrl && (
+                                  <a
+                                    href={gpsUrl}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    onClick={(e) => e.stopPropagation()}
+                                    title="Itinéraire"
+                                    aria-label="Itinéraire"
+                                    style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 22, height: 22, borderRadius: 6, color: '#0E6B6E', background: '#69C9CA1F', flexShrink: 0 }}
+                                  >
+                                    <Navigation size={12} />
+                                  </a>
+                                )}
                               </div>
                               <div style={{ fontSize: 13, fontWeight: 600, color: '#111827', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                                 {clientName(job) || job.title || job.service || 'Job'}
@@ -117,7 +133,7 @@ export default function WeekCalendar({
                                   })}
                                 </div>
                               )}
-                            </button>
+                            </div>
                           )
                         })
                       )}

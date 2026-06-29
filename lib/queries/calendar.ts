@@ -16,6 +16,7 @@ export interface Job {
   team: string | null
   assigned_ids: string[]
   route_name: string | null
+  address: string | null
   start_at: string | null
   end_at: string | null
   all_day: boolean
@@ -33,7 +34,7 @@ export interface AssignProfile {
 }
 
 const JOB_COLS =
-  'id, client_id, lead_id, title, service, type, team, assigned_ids, route_name, start_at, end_at, all_day, status, price, notes, clients(name)'
+  'id, client_id, lead_id, title, service, type, team, assigned_ids, route_name, address, start_at, end_at, all_day, status, price, notes, clients(name)'
 
 // Jobs d'une semaine pour un ou plusieurs types. weekStart = lundi (YYYY-MM-DD).
 export async function getJobsWeek(types: string[], weekStart: string): Promise<Job[]> {
@@ -62,6 +63,7 @@ export interface JobInput {
   team?: string | null
   assigned_ids?: string[]
   route_name?: string | null
+  address?: string | null
   start_at?: string | null
   end_at?: string | null
   status?: string
@@ -84,6 +86,14 @@ export async function updateJob(id: string, input: Partial<JobInput>): Promise<{
 export async function deleteJob(id: string): Promise<{ error: string | null }> {
   const { error } = await supabase.from('jobs').delete().eq('id', id)
   return { error: error?.message ?? null }
+}
+
+// Lien Google Maps « itinéraire » vers l'adresse du job (ouvre l'app GPS du tél).
+// Aligné sur directionsUrl() de lib/queries/clients.ts.
+export function jobDirectionsUrl(job: Pick<Job, 'address'>): string | null {
+  const dest = (job.address ?? '').trim()
+  if (!dest) return null
+  return `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(dest)}`
 }
 
 // Employés assignables à un job, selon les rôles voulus (techs / terrain).

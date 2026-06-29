@@ -2,7 +2,7 @@
 import { useState } from 'react'
 import { createJob, updateJob, deleteJob, clientName, type Job, type AssignProfile } from '@/lib/queries/calendar'
 import type { Lane } from './WeekCalendar'
-import { Trash2 } from 'lucide-react'
+import { Trash2, Navigation } from 'lucide-react'
 
 interface Props {
   kind: 'fenetre' | 'paysagement'
@@ -39,6 +39,7 @@ export default function JobModal({ kind, lanes, assignProfiles, initialDate, ini
   const [title, setTitle] = useState(job ? (clientName(job) || job.title || '') : '')
   const [service, setService] = useState(job?.service ?? '')
   const [routeName, setRouteName] = useState(job?.route_name ?? '')
+  const [address, setAddress] = useState(job?.address ?? '')
   const [date, setDate] = useState(job ? dateInput(job.start_at) : (initialDate ?? ''))
   const [start, setStart] = useState(job ? timeInput(job.start_at) : '08:00')
   const [end, setEnd] = useState(job ? timeInput(job.end_at) : '10:00')
@@ -66,6 +67,7 @@ export default function JobModal({ kind, lanes, assignProfiles, initialDate, ini
       team,
       assigned_ids: assigned,
       route_name: isGazon ? (routeName || null) : null,
+      address: address.trim() || null,
       start_at: buildISO(date, start),
       end_at: buildISO(date, end),
       status,
@@ -117,6 +119,23 @@ export default function JobModal({ kind, lanes, assignProfiles, initialDate, ini
           )}
 
           <Field label="Service"><input value={service} onChange={(e) => setService(e.target.value)} style={inp} placeholder={kind === 'fenetre' ? 'Lavage ext.' : 'Tonte + plate-bandes'} /></Field>
+
+          <Field label="Adresse">
+            <div style={{ display: 'flex', gap: 6 }}>
+              <input value={address} onChange={(e) => setAddress(e.target.value)} style={inp} placeholder="123 rue Principale, Magog" />
+              {address.trim() && (
+                <a
+                  href={`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(address.trim())}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  aria-label="Ouvrir l'itinéraire"
+                  style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', flex: '0 0 40px', borderRadius: 8, border: '1px solid #69C9CA', background: '#69C9CA14', color: '#0E6B6E' }}
+                >
+                  <Navigation size={16} />
+                </a>
+              )}
+            </div>
+          </Field>
 
           <div style={{ display: 'flex', gap: 10 }}>
             <Field label="Date" flex><input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={inp} /></Field>
