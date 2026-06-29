@@ -6,7 +6,7 @@ import Image from 'next/image'
 
 export default function LoginPage() {
   const router = useRouter()
-  const [email, setEmail] = useState('')
+  const [identifier, setIdentifier] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
@@ -15,6 +15,20 @@ export default function LoginPage() {
     e.preventDefault()
     setLoading(true)
     setError('')
+
+    // Accepte un courriel OU un nom d'utilisateur : si pas de '@', on résout
+    // le courriel correspondant (fonction DB) avant de se connecter.
+    let email = identifier.trim()
+    if (email && !email.includes('@')) {
+      const { data, error: rpcErr } = await supabase.rpc('mw_email_for_username', { p_username: email })
+      if (rpcErr || !data) {
+        setError("Nom d'utilisateur introuvable")
+        setLoading(false)
+        return
+      }
+      email = data as string
+    }
+
     const { error } = await supabase.auth.signInWithPassword({ email, password })
     if (error) {
       setError(error.message)
@@ -75,13 +89,15 @@ export default function LoginPage() {
           <form onSubmit={handleLogin} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
             <div>
               <label style={{ display: 'block', fontSize: 13, fontWeight: 500, color: '#374151', marginBottom: 6 }}>
-                Adresse email
+                Courriel ou nom d&apos;utilisateur
               </label>
               <input
-                type="email"
-                placeholder="vous@exemple.com"
-                value={email}
-                onChange={e => setEmail(e.target.value)}
+                type="text"
+                autoCapitalize="none"
+                autoCorrect="off"
+                placeholder="ex. william.yelle"
+                value={identifier}
+                onChange={e => setIdentifier(e.target.value)}
                 required
                 style={{
                   width: '100%',
