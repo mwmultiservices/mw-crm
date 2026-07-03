@@ -72,3 +72,13 @@ export async function refreshTokens(refreshToken: string): Promise<TokenResponse
   if (!res.ok) throw new Error(`QuickBooks refresh: ${res.status} ${await res.text()}`)
   return res.json()
 }
+
+// Révoque un token (refresh ou access) chez Intuit — best-effort.
+export async function revokeToken(token: string): Promise<void> {
+  const res = await fetch('https://developer.api.intuit.com/v2/oauth2/tokens/revoke', {
+    method: 'POST',
+    headers: { Authorization: basicAuth(), 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify({ token }),
+  })
+  if (!res.ok) throw new Error(`QuickBooks revoke: ${res.status} ${await res.text()}`)
+}

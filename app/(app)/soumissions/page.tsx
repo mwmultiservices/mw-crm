@@ -151,6 +151,7 @@ export default function SoumissionsPage() {
 function QuickBooksBar() {
   const [state, setState] = useState<{ configured: boolean; connected: boolean; env: string } | null>(null)
   const [flash, setFlash] = useState<string | null>(null)
+  const [disconnecting, setDisconnecting] = useState(false)
 
   useEffect(() => {
     fetch('/api/quickbooks/status').then((r) => r.json()).then(setState).catch(() => {})
@@ -163,6 +164,21 @@ function QuickBooksBar() {
     }
     if (qb && messages[qb]) setFlash(messages[qb])
   }, [])
+
+  async function disconnect() {
+    if (!confirm('Déconnecter ce compte QuickBooks ? Tu pourras en connecter un autre ensuite.')) return
+    setDisconnecting(true)
+    try {
+      await fetch('/api/quickbooks/disconnect', { method: 'POST' })
+      const r = await fetch('/api/quickbooks/status').then((x) => x.json())
+      setState(r)
+      setFlash('QuickBooks déconnecté.')
+    } catch {
+      setFlash('Échec de la déconnexion.')
+    } finally {
+      setDisconnecting(false)
+    }
+  }
 
   if (!state) return null
 
@@ -179,7 +195,15 @@ function QuickBooksBar() {
         <span style={{ fontSize: 12, color: '#9CA3AF' }}>credentials Intuit requis (cf. DEPLOY.md)</span>
       ) : !state.connected ? (
         <a href="/api/quickbooks/connect" style={{ ...primaryBtn, textDecoration: 'none' }}>Connecter QuickBooks</a>
-      ) : null}
+      ) : (
+        <button
+          onClick={disconnect}
+          disabled={disconnecting}
+          style={{ padding: '8px 14px', borderRadius: 8, border: '1px solid #FCA5A5', background: '#FEF2F2', color: '#B91C1C', fontSize: 13, fontWeight: 600, cursor: disconnecting ? 'default' : 'pointer', opacity: disconnecting ? 0.6 : 1 }}
+        >
+          {disconnecting ? 'Déconnexion…' : 'Déconnecter'}
+        </button>
+      )}
     </div>
   )
 }
