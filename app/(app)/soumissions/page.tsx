@@ -218,6 +218,7 @@ function QuoteModal({
   const isEdit = !!quote
   const [type, setType] = useState(quote?.type ?? 'devis')
   const [clientName, setClientName] = useState(quote?.client_name ?? '')
+  const [clientEmail, setClientEmail] = useState(quote?.client_email ?? '')
   const [serviceType, setServiceType] = useState(quote?.service_type ?? '')
   const [category, setCategory] = useState(quote?.service_category ?? '')
   const [plan, setPlan] = useState(quote?.plan ?? '')
@@ -258,7 +259,7 @@ function QuoteModal({
     if (!clientName.trim()) { setError('Nom du client requis.'); return }
     setSaving(true); setError('')
     const payload = {
-      type, client_name: clientName.trim(), service_type: serviceType || null,
+      type, client_name: clientName.trim(), client_email: clientEmail.trim() || null, service_type: serviceType || null,
       service_category: category || null, plan: plan || null,
       price: price ? Number(price) : null, status, rep_id: rep || null, notes: notes || null,
     }
@@ -294,6 +295,7 @@ function QuoteModal({
             </div>
           </Field>
           <Field label="Client *"><input value={clientName} onChange={(e) => setClientName(e.target.value)} style={inp} autoFocus placeholder="Famille Tremblay" /></Field>
+          <Field label="Courriel client (pour QuickBooks)"><input value={clientEmail} onChange={(e) => setClientEmail(e.target.value)} style={inp} type="email" autoCapitalize="none" placeholder="client@exemple.com" /></Field>
           <Field label="Service"><input value={serviceType} onChange={(e) => setServiceType(e.target.value)} style={inp} placeholder="Lavage fenêtres ext." /></Field>
           <div style={{ display: 'flex', gap: 10 }}>
             <Field label="Catégorie" flex>

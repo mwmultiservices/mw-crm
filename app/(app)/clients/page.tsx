@@ -8,7 +8,7 @@ import {
   getClients, getClientHistory, createClient, updateClient, deleteClient,
   directionsUrl, type Client, type ClientHistory,
 } from '@/lib/queries/clients'
-import { Plus, Search, Users, Navigation, Phone, Mail, MapPin, X, Trash2, Pencil } from 'lucide-react'
+import { Plus, Search, Users, Navigation, Phone, Mail, MapPin, X, Trash2, Pencil, RefreshCw } from 'lucide-react'
 
 const SERVICE_LABELS: Record<string, string> = { fenetre: 'Fenêtres', paysagement: 'Paysagement', projet: 'Projet' }
 const SERVICE_COLORS: Record<string, string> = { fenetre: '#69C9CA', paysagement: '#697035', projet: '#8D5D36' }
@@ -21,6 +21,8 @@ export default function ClientsPage() {
   const [selected, setSelected] = useState<Client | null>(null)
   const [editing, setEditing] = useState<Client | 'new' | null>(null)
   const [loading, setLoading] = useState(true)
+  const [qbSyncing, setQbSyncing] = useState(false)
+  const [qbMsg, setQbMsg] = useState<{ ok: boolean; text: string } | null>(null)
 
   const manager = isManager(role)
 
@@ -50,13 +52,51 @@ export default function ClientsPage() {
   const onSaved = () => { setEditing(null); load() }
   const onDeleted = () => { setEditing(null); setSelected(null); load() }
 
+  // Import QB → CRM : clients + contrats passés (Estimates/Invoices → historique)
+  const syncQuickBooks = async () => {
+    setQbSyncing(true); setQbMsg(null)
+    try {
+      const res = await fetch('/api/quickbooks/import', { method: 'POST' })
+      const j = await res.json()
+      if (j.ok) {
+        setQbMsg({
+          ok: true,
+          text: `✓ QuickBooks : ${j.clientsCreated} client(s) créé(s), ${j.clientsUpdated} complété(s), ${j.quotesImported} devis + ${j.invoicesImported} facture(s) importés${j.skipped ? ` (${j.skipped} déjà présents)` : ''}.`,
+        })
+        await load()
+      } else {
+        setQbMsg({ ok: false, text: j.error || "Échec de l'import QuickBooks." })
+      }
+    } catch {
+      setQbMsg({ ok: false, text: 'Erreur réseau.' })
+    } finally {
+      setQbSyncing(false)
+    }
+  }
+
   return (
     <div style={{ fontFamily: 'Inter, sans-serif', maxWidth: 1000, margin: '0 auto', padding: '8px 4px 80px' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 16 }}>
         <h1 style={{ fontSize: 24, fontWeight: 700, color: '#111827', margin: 0 }}>Clients</h1>
         <span style={{ color: '#6B7280', fontSize: 13 }}>{clients.length}</span>
-        <button onClick={() => setEditing('new')} style={{ ...primaryBtn, marginLeft: 'auto' }}><Plus size={16} />Nouveau</button>
+        {manager && (
+          <button onClick={syncQuickBooks} disabled={qbSyncing} title="Importer les clients et contrats QuickBooks" style={{
+            ...primaryBtn, marginLeft: 'auto', background: '#2CA01C', color: '#FFF', opacity: qbSyncing ? 0.6 : 1,
+          }}>
+            <RefreshCw size={15} style={qbSyncing ? { animation: 'mw-spin 1s linear infinite' } : undefined} />
+            {qbSyncing ? 'Import…' : 'Importer QuickBooks'}
+          </button>
+        )}
+        <button onClick={() => setEditing('new')} style={{ ...primaryBtn, marginLeft: manager ? 0 : 'auto' }}><Plus size={16} />Nouveau</button>
       </div>
+
+      {qbMsg && (
+        <div style={{
+          padding: '9px 12px', borderRadius: 10, marginBottom: 12, fontSize: 13, fontWeight: 600,
+          background: qbMsg.ok ? '#ECFDF5' : '#FEF2F2', color: qbMsg.ok ? '#047857' : '#B91C1C',
+          border: `1px solid ${qbMsg.ok ? '#A7F3D0' : '#FCA5A5'}`,
+        }}>{qbMsg.text}</div>
+      )}
 
       {/* recherche */}
       <div style={{ position: 'relative', marginBottom: 16 }}>

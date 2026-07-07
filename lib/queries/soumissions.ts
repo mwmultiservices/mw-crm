@@ -9,6 +9,7 @@ export interface Quote {
   id: string
   client_id: string | null
   client_name: string | null
+  client_email: string | null
   service_type: string | null
   service_category: string | null
   plan: string | null
@@ -44,7 +45,7 @@ export const CATEGORY_LABELS: Record<string, string> = {
 }
 
 const COLS =
-  'id, client_id, client_name, service_type, service_category, plan, price, notes, status, type, rep_id, quickbooks_id, created_at'
+  'id, client_id, client_name, client_email, service_type, service_category, plan, price, notes, status, type, rep_id, quickbooks_id, created_at'
 
 export async function getQuotes(repId?: string): Promise<Quote[]> {
   let q = supabase.from('quotes').select(COLS).order('created_at', { ascending: false })
@@ -55,6 +56,7 @@ export async function getQuotes(repId?: string): Promise<Quote[]> {
 
 export interface QuoteInput {
   client_name?: string | null
+  client_email?: string | null
   service_type?: string | null
   service_category?: string | null
   plan?: string | null

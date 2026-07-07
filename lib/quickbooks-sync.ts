@@ -70,10 +70,16 @@ const esc = (s: string) => s.replace(/'/g, "''") // échappe les apostrophes pou
 interface ClientInfo {
   name: string; email?: string | null; phone?: string | null
   address?: string | null; city?: string | null; postal?: string | null
+  qbId?: string | null // clients.quickbooks_id si déjà mappé
 }
 
-// Trouve le Customer par DisplayName, sinon le crée. Retourne son Id QBO.
+// Trouve le Customer (par quickbooks_id mappé, sinon DisplayName), sinon le crée.
 async function findOrCreateCustomer(conn: Conn, c: ClientInfo): Promise<string> {
+  // mapping direct si le client CRM a déjà son Id QBO (vérifié : la connexion a pu changer de compagnie)
+  if (c.qbId) {
+    const byId = await qbQuery(conn, `select Id from Customer where Id = '${esc(c.qbId)}'`)
+    if (byId?.QueryResponse?.Customer?.[0]?.Id) return c.qbId
+  }
   const found = await qbQuery(conn, `select Id from Customer where DisplayName = '${esc(c.name)}'`)
   const hit = found?.QueryResponse?.Customer?.[0]
   if (hit?.Id) return hit.Id
@@ -124,7 +130,7 @@ export async function pushQuoteToQuickBooks(quoteId: string): Promise<PushResult
 
   const { data: q } = await supabaseAdmin
     .from('quotes')
-    .select('id, client_id, client_name, service_type, service_category, price, notes, type, quickbooks_id')
+    .select('id, client_id, client_name, client_email, service_type, service_category, price, notes, type, quickbooks_id')
     .eq('id', quoteId)
     .single()
   if (!q) return { ok: false, error: 'Soumission introuvable.' }
@@ -138,18 +144,23 @@ export async function pushQuoteToQuickBooks(quoteId: string): Promise<PushResult
   if (q.client_id) {
     const { data: c } = await supabaseAdmin
       .from('clients')
-      .select('name, email, phone, address, city, postal_code')
+      .select('name, email, phone, address, city, postal_code, quickbooks_id')
       .eq('id', q.client_id)
       .maybeSingle()
     if (c) {
       client.name = client.name || c.name
       client.email = c.email; client.phone = c.phone
       client.address = c.address; client.city = c.city; client.postal = c.postal_code
+      client.qbId = c.quickbooks_id
     }
   }
   if (!client.name) return { ok: false, error: 'Nom du client manquant.' }
 
   const customerId = await findOrCreateCustomer(conn, client)
+  // mémorise le mapping client CRM <-> Customer QBO (utile aux prochains push + à l'import)
+  if (q.client_id && client.qbId !== customerId) {
+    await supabaseAdmin.from('clients').update({ quickbooks_id: customerId }).eq('id', q.client_id)
+  }
   const itemId = await findOrCreateServiceItem(conn)
 
   const description =
@@ -165,6 +176,9 @@ export async function pushQuoteToQuickBooks(quoteId: string): Promise<PushResult
     }],
   }
   if (q.notes) doc.CustomerMemo = { value: q.notes }
+  // courriel du destinataire (BillEmail) : celui de la soumission, sinon celui du client
+  const billEmail = (q.client_email || client.email || '').trim()
+  if (billEmail) doc.BillEmail = { Address: billEmail }
 
   const isInvoice = q.type === 'facture'
   const res = await qbFetch(conn, isInvoice ? '/invoice' : '/estimate', { method: 'POST', body: JSON.stringify(doc) })
@@ -174,4 +188,176 @@ export async function pushQuoteToQuickBooks(quoteId: string): Promise<PushResult
   await supabaseAdmin.from('quotes').update({ quickbooks_id: qbId }).eq('id', quoteId)
 
   return { ok: true, qbId, docNumber: obj?.DocNumber, entity: isInvoice ? 'Invoice' : 'Estimate' }
+}
+
+// ============================================================
+// Import QB → CRM : Customers → clients, Estimates/Invoices → quotes.
+// Idempotent : match clients par quickbooks_id (puis nom), quotes par
+// (quickbooks_id, type). Ne réécrit JAMAIS une donnée CRM existante —
+// remplit seulement les champs vides.
+// ============================================================
+
+// Pagination QBO (max 1000 lignes par requête).
+async function qbQueryAll(conn: Conn, entity: string): Promise<any[]> {
+  const PAGE = 1000
+  const out: any[] = []
+  for (let start = 1; ; start += PAGE) {
+    const res = await qbQuery(conn, `select * from ${entity} STARTPOSITION ${start} MAXRESULTS ${PAGE}`)
+    const rows = res?.QueryResponse?.[entity] ?? []
+    out.push(...rows)
+    if (rows.length < PAGE) break
+  }
+  return out
+}
+
+// Même logique que categoryOf (lib/queries/accueil.ts) / mw_service_category() SQL.
+function categoryOf(raw: string | null | undefined): string | null {
+  const s = (raw || '')
+    .toLowerCase()
+    .replace(/[éèêë]/g, 'e').replace(/[àâä]/g, 'a')
+    .replace(/[îï]/g, 'i').replace(/[ôö]/g, 'o').replace(/[ûüù]/g, 'u')
+  if (!s) return null
+  if (/fenetre|vitre|window/.test(s)) return 'fenetre'
+  if (/gazon|pelouse|paysag|tonte|haie|lawn|landscap/.test(s)) return 'paysagement'
+  if (/projet|pave|amenag|muret/.test(s)) return 'projet'
+  return null
+}
+
+export interface ImportResult {
+  ok: boolean
+  error?: string
+  clientsCreated: number
+  clientsUpdated: number
+  quotesImported: number   // devis (Estimates)
+  invoicesImported: number // factures (Invoices)
+  skipped: number          // transactions déjà présentes dans le CRM
+}
+
+const EMPTY_IMPORT: ImportResult = {
+  ok: false, clientsCreated: 0, clientsUpdated: 0, quotesImported: 0, invoicesImported: 0, skipped: 0,
+}
+
+interface CrmClientRow {
+  id: string; name: string; quickbooks_id: string | null
+  email: string | null; phone: string | null
+  address: string | null; city: string | null; postal_code: string | null
+  services: string[] | null
+}
+
+export async function importFromQuickBooks(): Promise<ImportResult> {
+  const conn = await getValidConnection()
+  if (!conn) return { ...EMPTY_IMPORT, error: 'QuickBooks non connecté.' }
+  const r: ImportResult = { ...EMPTY_IMPORT, ok: true }
+
+  // --- 1. Customers → clients ---
+  const customers = await qbQueryAll(conn, 'Customer')
+  const { data: crmClients } = await supabaseAdmin
+    .from('clients')
+    .select('id, name, quickbooks_id, email, phone, address, city, postal_code, services')
+  const byQbId = new Map<string, CrmClientRow>()
+  const byName = new Map<string, CrmClientRow>()
+  for (const c of (crmClients as CrmClientRow[]) ?? []) {
+    if (c.quickbooks_id) byQbId.set(c.quickbooks_id, c)
+    byName.set(c.name.trim().toLowerCase(), c)
+  }
+
+  for (const cu of customers) {
+    const name = (cu.DisplayName || '').trim()
+    if (!name) continue
+    const fields = {
+      email: cu.PrimaryEmailAddr?.Address ?? null,
+      phone: cu.PrimaryPhone?.FreeFormNumber ?? null,
+      address: cu.BillAddr?.Line1 ?? null,
+      city: cu.BillAddr?.City ?? null,
+      postal_code: cu.BillAddr?.PostalCode ?? null,
+    }
+    const existing = byQbId.get(cu.Id) ?? byName.get(name.toLowerCase())
+    if (existing) {
+      // complète seulement ce qui manque côté CRM (jamais d'écrasement)
+      const patch: Record<string, unknown> = {}
+      if (!existing.quickbooks_id) patch.quickbooks_id = cu.Id
+      for (const [k, v] of Object.entries(fields)) {
+        if (v && !existing[k as keyof typeof fields]) patch[k] = v
+      }
+      if (Object.keys(patch).length) {
+        const { error } = await supabaseAdmin.from('clients').update(patch).eq('id', existing.id)
+        if (!error) { Object.assign(existing, patch); r.clientsUpdated++ }
+      }
+      existing.quickbooks_id = existing.quickbooks_id || cu.Id
+      byQbId.set(cu.Id, existing)
+    } else {
+      const { data: created, error } = await supabaseAdmin
+        .from('clients')
+        .insert({ name, quickbooks_id: cu.Id, ...fields, services: [] })
+        .select('id, name, quickbooks_id, email, phone, address, city, postal_code, services')
+        .single()
+      if (!error && created) {
+        r.clientsCreated++
+        byQbId.set(cu.Id, created as CrmClientRow)
+        byName.set(name.toLowerCase(), created as CrmClientRow)
+      }
+    }
+  }
+
+  // --- 2. Estimates + Invoices → quotes (historique des contrats) ---
+  const { data: existingQuotes } = await supabaseAdmin
+    .from('quotes')
+    .select('quickbooks_id, type')
+    .not('quickbooks_id', 'is', null)
+  const seen = new Set((existingQuotes ?? []).map((q) => `${q.type}:${q.quickbooks_id}`))
+
+  const [estimates, invoices] = await Promise.all([
+    qbQueryAll(conn, 'Estimate'),
+    qbQueryAll(conn, 'Invoice'),
+  ])
+  const rows: Record<string, unknown>[] = []
+  const servicesToAdd = new Map<string, Set<string>>() // client id → catégories vues
+
+  const collect = (txn: any, type: 'devis' | 'facture') => {
+    if (seen.has(`${type}:${txn.Id}`)) { r.skipped++; return }
+    // devis converti en facture (LinkedTxn Invoice) : la facture porte déjà le montant
+    if (type === 'devis' && (txn.LinkedTxn ?? []).some((l: any) => l.TxnType === 'Invoice')) { r.skipped++; return }
+    const client = txn.CustomerRef?.value ? byQbId.get(String(txn.CustomerRef.value)) : undefined
+    const desc = (txn.Line ?? []).find((l: any) => l.SalesItemLineDetail)?.Description ?? null
+    const category = categoryOf(desc) ?? categoryOf(txn.CustomerMemo?.value)
+    const status =
+      type === 'facture'
+        ? (Number(txn.Balance) === 0 ? 'paid' : 'invoiced')
+        : (['Accepted', 'Closed'].includes(txn.TxnStatus) ? 'signed' : 'sent')
+    rows.push({
+      client_id: client?.id ?? null,
+      client_name: client?.name ?? txn.CustomerRef?.name ?? null,
+      client_email: txn.BillEmail?.Address ?? null,
+      service_type: desc,
+      service_category: category,
+      price: txn.TotalAmt != null ? Number(txn.TotalAmt) : null,
+      notes: txn.CustomerMemo?.value ?? null,
+      status,
+      type,
+      quickbooks_id: txn.Id,
+      created_at: txn.TxnDate ?? undefined, // date réelle de la transaction QBO
+    })
+    if (type === 'facture') r.invoicesImported++; else r.quotesImported++
+    if (client && category) {
+      if (!servicesToAdd.has(client.id)) servicesToAdd.set(client.id, new Set(client.services ?? []))
+      servicesToAdd.get(client.id)!.add(category)
+    }
+  }
+  for (const e of estimates) collect(e, 'devis')
+  for (const inv of invoices) collect(inv, 'facture')
+
+  if (rows.length) {
+    const { error } = await supabaseAdmin.from('quotes').insert(rows)
+    if (error) return { ...r, ok: false, error: `Insertion des soumissions : ${error.message}` }
+  }
+
+  // --- 3. pastilles de services des clients (fenetre/paysagement/projet) ---
+  for (const [clientId, cats] of servicesToAdd) {
+    const current = (crmClients as CrmClientRow[] | null)?.find((c) => c.id === clientId)?.services ?? []
+    if (Array.from(cats).some((c) => !current.includes(c))) {
+      await supabaseAdmin.from('clients').update({ services: Array.from(new Set([...current, ...cats])) }).eq('id', clientId)
+    }
+  }
+
+  return r
 }
