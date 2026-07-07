@@ -24,6 +24,7 @@ export default function SoumissionsPage() {
   const [filter, setFilter] = useState<string>('all')
   const [editing, setEditing] = useState<Quote | 'new' | null>(null)
   const [loading, setLoading] = useState(true)
+  const [flash, setFlash] = useState<{ ok: boolean; text: string } | null>(null)
 
   const manager = isManager(role)
   const profileName = useMemo(() => Object.fromEntries(profiles.map((p) => [p.id, p.full_name ?? '—'])), [profiles])
@@ -67,6 +68,28 @@ export default function SoumissionsPage() {
     if (!ns) return
     await updateQuote(q.id, { status: ns })
     setQuotes((prev) => prev.map((x) => (x.id === q.id ? { ...x, status: ns } : x)))
+
+    // passage à « Envoyé » → propose l'envoi automatique par courriel via QuickBooks
+    if (ns === 'sent' && !q.quickbooks_emailed_at) {
+      const what = q.type === 'facture' ? 'la facture' : 'le devis'
+      if (!confirm(`Envoyer ${what} par courriel à ${q.client_name || 'ce client'} via QuickBooks ?`)) return
+      setFlash(null)
+      try {
+        const res = await fetch('/api/quickbooks/send', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ quoteId: q.id }),
+        })
+        const j = await res.json()
+        if (j.ok) {
+          setFlash({ ok: true, text: `✓ Courriel envoyé à ${j.email} via QuickBooks.` })
+          setQuotes((prev) => prev.map((x) => (x.id === q.id ? { ...x, quickbooks_emailed_at: new Date().toISOString() } : x)))
+        } else {
+          setFlash({ ok: false, text: j.error || "Échec de l'envoi du courriel." })
+        }
+      } catch {
+        setFlash({ ok: false, text: 'Erreur réseau (courriel non envoyé).' })
+      }
+    }
   }
 
   const onSaved = () => { setEditing(null); load(role, userId) }
@@ -80,6 +103,14 @@ export default function SoumissionsPage() {
       </div>
 
       {manager && <QuickBooksBar />}
+
+      {flash && (
+        <div style={{
+          padding: '9px 12px', borderRadius: 10, marginBottom: 12, fontSize: 13, fontWeight: 600,
+          background: flash.ok ? '#ECFDF5' : '#FEF2F2', color: flash.ok ? '#047857' : '#B91C1C',
+          border: `1px solid ${flash.ok ? '#A7F3D0' : '#FCA5A5'}`,
+        }}>{flash.text}</div>
+      )}
 
       {/* résumé */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12, marginBottom: 16 }}>
@@ -230,6 +261,8 @@ function QuoteModal({
   const [error, setError] = useState('')
   const [qbSending, setQbSending] = useState(false)
   const [qbSent, setQbSent] = useState(!!quote?.quickbooks_id)
+  const [qbEmailing, setQbEmailing] = useState(false)
+  const [qbEmailed, setQbEmailed] = useState(!!quote?.quickbooks_emailed_at)
   const [qbMsg, setQbMsg] = useState<{ ok: boolean; text: string } | null>(null)
 
   const sendToQb = async () => {
@@ -252,6 +285,30 @@ function QuoteModal({
       setQbMsg({ ok: false, text: 'Erreur réseau.' })
     } finally {
       setQbSending(false)
+    }
+  }
+
+  // envoi du courriel au client via QuickBooks (pousse dans QB au passage si nécessaire)
+  const sendEmailToClient = async () => {
+    if (!quote) return
+    setQbEmailing(true); setQbMsg(null)
+    try {
+      const res = await fetch('/api/quickbooks/send', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ quoteId: quote.id }),
+      })
+      const j = await res.json()
+      if (j.ok) {
+        setQbSent(true); setQbEmailed(true)
+        setQbMsg({ ok: true, text: `✓ Courriel envoyé à ${j.email}${j.pushed ? ' (et soumission créée dans QuickBooks)' : ''}.` })
+      } else {
+        if (j.already) setQbEmailed(true)
+        setQbMsg({ ok: false, text: j.error || "Échec de l'envoi du courriel." })
+      }
+    } catch {
+      setQbMsg({ ok: false, text: 'Erreur réseau.' })
+    } finally {
+      setQbEmailing(false)
     }
   }
 
@@ -329,17 +386,25 @@ function QuoteModal({
         </div>
 
         {manager && isEdit && (
-          <div style={{ marginTop: 16, paddingTop: 14, borderTop: '1px solid #F3F4F6' }}>
+          <div style={{ marginTop: 16, paddingTop: 14, borderTop: '1px solid #F3F4F6', display: 'flex', flexDirection: 'column', gap: 8 }}>
             {qbSent ? (
               <div style={{ fontSize: 13, fontWeight: 600, color: '#2CA01C' }}>✓ Envoyée dans QuickBooks</div>
             ) : (
-              <button onClick={sendToQb} disabled={qbSending} style={{
+              <button onClick={sendToQb} disabled={qbSending || qbEmailing} style={{
                 ...primaryBtn, width: '100%', justifyContent: 'center',
                 background: '#2CA01C', color: '#FFF', opacity: qbSending ? 0.6 : 1,
               }}>{qbSending ? 'Envoi…' : 'Envoyer vers QuickBooks'}</button>
             )}
-            {qbMsg && <div style={{ marginTop: 8, fontSize: 12, color: qbMsg.ok ? '#047857' : '#991B1B' }}>{qbMsg.text}</div>}
-            {!qbSent && <div style={{ marginTop: 6, fontSize: 11, color: '#9CA3AF' }}>Envoie les valeurs enregistrées (enregistre d’abord tes modifications).</div>}
+            {qbEmailed ? (
+              <div style={{ fontSize: 13, fontWeight: 600, color: '#047857' }}>✉ Courriel envoyé au client</div>
+            ) : (
+              <button onClick={sendEmailToClient} disabled={qbEmailing || qbSending} style={{
+                ...primaryBtn, width: '100%', justifyContent: 'center',
+                background: '#0D6E6F', color: '#FFF', opacity: qbEmailing ? 0.6 : 1,
+              }}>{qbEmailing ? 'Envoi du courriel…' : '✉ Envoyer au client par courriel'}</button>
+            )}
+            {qbMsg && <div style={{ fontSize: 12, color: qbMsg.ok ? '#047857' : '#991B1B' }}>{qbMsg.text}</div>}
+            {!qbSent && <div style={{ fontSize: 11, color: '#9CA3AF' }}>Envoie les valeurs enregistrées (enregistre d’abord tes modifications). Le courriel passe par QuickBooks (PDF joint).</div>}
           </div>
         )}
 

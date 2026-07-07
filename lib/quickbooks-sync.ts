@@ -191,6 +191,64 @@ export async function pushQuoteToQuickBooks(quoteId: string): Promise<PushResult
 }
 
 // ============================================================
+// Envoi du devis/facture PAR COURRIEL au client, via QuickBooks
+// (endpoint /send : QBO génère le PDF et envoie le courriel).
+// Pousse d'abord la soumission dans QB si pas encore fait.
+// Garde anti double-envoi : quotes.quickbooks_emailed_at.
+// ============================================================
+
+export interface SendResult {
+  ok: boolean
+  already?: boolean // déjà envoyée par courriel
+  email?: string
+  pushed?: boolean  // la soumission a été poussée dans QB au passage
+  error?: string
+}
+
+export async function sendQuoteToClient(quoteId: string): Promise<SendResult> {
+  const { data: q } = await supabaseAdmin
+    .from('quotes')
+    .select('id, client_id, client_email, type, status, quickbooks_id, quickbooks_emailed_at')
+    .eq('id', quoteId)
+    .single()
+  if (!q) return { ok: false, error: 'Soumission introuvable.' }
+  if (q.quickbooks_emailed_at) return { ok: false, already: true, error: 'Courriel déjà envoyé au client.' }
+
+  // destinataire : courriel de la soumission, sinon celui de la fiche client
+  let email = (q.client_email || '').trim()
+  if (!email && q.client_id) {
+    const { data: c } = await supabaseAdmin.from('clients').select('email').eq('id', q.client_id).maybeSingle()
+    email = (c?.email || '').trim()
+  }
+  if (!email) return { ok: false, error: 'Aucun courriel client (ajoute-le sur la soumission ou la fiche client).' }
+
+  // pousse dans QuickBooks si pas encore synchronisée
+  let qbId: string | null = q.quickbooks_id
+  let pushed = false
+  if (!qbId) {
+    const p = await pushQuoteToQuickBooks(quoteId)
+    if (!p.ok || !p.qbId) return { ok: false, error: p.error || 'Échec de l’envoi vers QuickBooks.' }
+    qbId = p.qbId
+    pushed = true
+  }
+
+  const conn = await getValidConnection()
+  if (!conn) return { ok: false, error: 'QuickBooks non connecté.' }
+  const entity = q.type === 'facture' ? 'invoice' : 'estimate'
+  // l'endpoint /send exige Content-Type: application/octet-stream (corps vide)
+  await qbFetch(conn, `/${entity}/${qbId}/send?sendTo=${encodeURIComponent(email)}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/octet-stream' },
+  })
+
+  const patch: Record<string, unknown> = { quickbooks_emailed_at: new Date().toISOString() }
+  if (q.status === 'draft') patch.status = 'sent' // un envoi au client = soumission « Envoyée »
+  await supabaseAdmin.from('quotes').update(patch).eq('id', quoteId)
+
+  return { ok: true, email, pushed }
+}
+
+// ============================================================
 // Import QB → CRM : Customers → clients, Estimates/Invoices → quotes.
 // Idempotent : match clients par quickbooks_id (puis nom), quotes par
 // (quickbooks_id, type). Ne réécrit JAMAIS une donnée CRM existante —
@@ -335,6 +393,7 @@ export async function importFromQuickBooks(): Promise<ImportResult> {
       status,
       type,
       quickbooks_id: txn.Id,
+      quickbooks_emailed_at: txn.EmailStatus === 'EmailSent' ? (txn.TxnDate ?? new Date().toISOString()) : null,
       created_at: txn.TxnDate ?? undefined, // date réelle de la transaction QBO
     })
     if (type === 'facture') r.invoicesImported++; else r.quotesImported++
