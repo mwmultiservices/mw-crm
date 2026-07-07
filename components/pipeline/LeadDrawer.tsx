@@ -30,6 +30,22 @@ interface Props {
 const money = (n: number) =>
   new Intl.NumberFormat('fr-CA', { style: 'currency', currency: 'CAD', maximumFractionDigits: 0 }).format(n)
 
+// « Aujourd'hui » / « Hier » / date longue, pour les séparateurs du fil SMS
+function dayLabel(iso: string): string {
+  const d = new Date(iso)
+  const today = new Date(); today.setHours(0, 0, 0, 0)
+  const day = new Date(d); day.setHours(0, 0, 0, 0)
+  const diff = Math.round((today.getTime() - day.getTime()) / 86400000)
+  if (diff === 0) return "Aujourd'hui"
+  if (diff === 1) return 'Hier'
+  return d.toLocaleDateString('fr-CA', {
+    weekday: 'short', day: 'numeric', month: 'long',
+    ...(d.getFullYear() !== today.getFullYear() ? { year: 'numeric' as const } : null),
+  })
+}
+
+const sameDay = (a: string, b: string) => new Date(a).toDateString() === new Date(b).toDateString()
+
 export default function LeadDrawer({ lead, repName, onClose, onStageChange }: Props) {
   const [thread, setThread] = useState<SmsMessage[]>([])
   const [input, setInput] = useState('')
@@ -165,10 +181,19 @@ export default function LeadDrawer({ lead, repName, onClose, onStageChange }: Pr
               Aucun message. Envoyez un SMS pour démarrer la conversation.
             </div>
           ) : (
-            thread.map((m) => {
+            thread.map((m, i) => {
               const out = m.direction === 'out'
+              const showDay = i === 0 || !sameDay(m.created_at, thread[i - 1].created_at)
               return (
-                <div key={m.id} style={{ display: 'flex', justifyContent: out ? 'flex-end' : 'flex-start', marginBottom: 8 }}>
+                <div key={m.id}>
+                  {showDay && (
+                    <div style={{ display: 'flex', justifyContent: 'center', margin: i === 0 ? '0 0 12px' : '14px 0 12px' }}>
+                      <span style={{ fontSize: 11, fontWeight: 600, color: '#6B7280', background: '#E5E7EB', padding: '3px 12px', borderRadius: 999 }}>
+                        {dayLabel(m.created_at)}
+                      </span>
+                    </div>
+                  )}
+                  <div style={{ display: 'flex', justifyContent: out ? 'flex-end' : 'flex-start', marginBottom: 8 }}>
                   <div style={{
                     maxWidth: '78%', padding: '8px 12px', borderRadius: 14, fontSize: 14, lineHeight: 1.35,
                     background: out ? '#69C9CA' : '#FFFFFF', color: out ? '#06363B' : '#111827',
@@ -180,6 +205,7 @@ export default function LeadDrawer({ lead, repName, onClose, onStageChange }: Pr
                       {new Date(m.created_at).toLocaleTimeString('fr-CA', { hour: '2-digit', minute: '2-digit' })}
                       {m.status === 'stub' ? ' · non envoyé' : ''}
                     </div>
+                  </div>
                   </div>
                 </div>
               )

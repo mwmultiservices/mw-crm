@@ -30,6 +30,7 @@ export default function PipelinePage() {
   const [selected, setSelected] = useState<Lead | null>(null)
   const [showNew, setShowNew] = useState(false)
   const [loading, setLoading] = useState(true)
+  const [dragOver, setDragOver] = useState<string | null>(null)
 
   const manager = isManager(role)
   const profileName = useMemo(() => {
@@ -82,6 +83,21 @@ export default function PipelinePage() {
     setSelected((s) => (s && s.id === leadId ? { ...s, stage } : s))
   }
 
+  // drop d'une carte sur une colonne : maj optimiste + route serveur (mêmes automatisations que le drawer)
+  const dropLead = async (leadId: string, newStage: string) => {
+    setDragOver(null)
+    const lead = leads.find((l) => l.id === leadId)
+    if (!lead || lead.stage === newStage) return
+    const prevStage = lead.stage
+    handleStageChange(leadId, newStage)
+    const res = await fetch('/api/leads/stage', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ lead_id: leadId, stage: newStage }),
+    }).catch(() => null)
+    if (!res || !res.ok) handleStageChange(leadId, prevStage)
+  }
+
   return (
     <div style={{ fontFamily: 'Inter, sans-serif', padding: '8px 4px 80px' }}>
       {/* en-tête */}
@@ -110,8 +126,18 @@ export default function PipelinePage() {
       ) : (
         <div style={{ display: 'flex', gap: 12, overflowX: 'auto', paddingBottom: 12 }}>
           {columns.map((col) => (
-            <div key={col.id} style={{ flex: '0 0 260px', maxWidth: 260 }}>
-              <div style={{ background: '#FFF', borderRadius: '0 0 8px 8px', border: '1px solid #E5E7EB', borderTop: `3px solid ${col.color}` }}>
+            <div
+              key={col.id}
+              style={{ flex: '0 0 260px', maxWidth: 260 }}
+              onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; if (dragOver !== col.id) setDragOver(col.id) }}
+              onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragOver((d) => (d === col.id ? null : d)) }}
+              onDrop={(e) => { e.preventDefault(); const id = e.dataTransfer.getData('text/plain'); if (id) dropLead(id, col.id) }}
+            >
+              <div style={{
+                background: dragOver === col.id ? '#F0FDFA' : '#FFF', borderRadius: '0 0 8px 8px',
+                border: `1px ${dragOver === col.id ? 'dashed' : 'solid'} ${dragOver === col.id ? col.color : '#E5E7EB'}`,
+                borderTop: `3px solid ${col.color}`,
+              }}>
                 <div style={{ padding: '10px 12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                   <span style={{ fontSize: 12, fontWeight: 700, color: '#374151', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
                     {col.label}
@@ -121,7 +147,14 @@ export default function PipelinePage() {
                 </div>
                 <div style={{ padding: '0 8px 8px', display: 'flex', flexDirection: 'column', gap: 8, minHeight: 40 }}>
                   {col.leads.map((lead) => (
-                    <button key={lead.id} onClick={() => setSelected(lead)} style={{ ...cardStyle, ...(lead.needs_follow_up ? { borderColor: '#F59E0B', background: '#FFFBEB' } : null) }}>
+                    <button
+                      key={lead.id}
+                      onClick={() => setSelected(lead)}
+                      draggable
+                      onDragStart={(e) => { e.dataTransfer.setData('text/plain', lead.id); e.dataTransfer.effectAllowed = 'move' }}
+                      onDragEnd={() => setDragOver(null)}
+                      style={{ ...cardStyle, ...(lead.needs_follow_up ? { borderColor: '#F59E0B', background: '#FFFBEB' } : null) }}
+                    >
                       <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                         {lead.needs_follow_up && <span title="À relancer" style={{ fontSize: 12 }}>⏰</span>}
                         <div style={{ fontSize: 14, fontWeight: 600, color: '#111827' }}>{lead.name}</div>
