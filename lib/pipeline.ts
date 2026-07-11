@@ -41,9 +41,11 @@ export interface Lead {
   service_category: string | null
   stage: string
   rep_id: string | null
+  client_id?: string | null
   price: number | null
   notes: string | null
   needs_follow_up?: boolean | null
+  unread_sms?: boolean | null // le client a répondu par SMS (pastille Kanban)
   created_at: string
 }
 

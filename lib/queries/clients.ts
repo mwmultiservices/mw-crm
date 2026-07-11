@@ -46,6 +46,25 @@ export async function getClientHistory(clientId: string): Promise<ClientHistory>
   }
 }
 
+// Retrouve le client rattaché à un lead : par client_id si posé (trigger D2D),
+// sinon par numéro de téléphone (match sur les 10 derniers chiffres).
+export async function findClientForLead(
+  clientId: string | null | undefined,
+  phone: string | null | undefined
+): Promise<Client | null> {
+  if (clientId) {
+    const { data } = await supabase.from('clients').select(COLS).eq('id', clientId).maybeSingle()
+    if (data) return data as Client
+  }
+  const key = (phone ?? '').replace(/\D/g, '').slice(-10)
+  if (!key) return null
+  const { data } = await supabase.from('clients').select(COLS).not('phone', 'is', null)
+  const match = (data as Client[] | null)?.find(
+    (c) => (c.phone ?? '').replace(/\D/g, '').slice(-10) === key
+  )
+  return match ?? null
+}
+
 export interface ClientInput {
   name?: string
   address?: string | null

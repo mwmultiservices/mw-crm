@@ -7,6 +7,7 @@ import Image from 'next/image'
 import { LogOut } from 'lucide-react'
 import AppHeader from '@/components/AppHeader'
 import { navForRole, MOBILE_NAV_BY_ROLE, type NavItem } from '@/lib/nav'
+import { isManager } from '@/lib/roles'
 
 const ROLE_LABEL: Record<string, string> = {
   admin: 'Admin', lead: 'Lead ventes', rep: 'Rep D2D',
@@ -22,10 +23,13 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
   const [loading, setLoading] = useState(true)
   const [profile, setProfile] = useState<{ role: string; secondary_role: string | null; full_name: string | null; color: string | null } | null>(null)
+  const [userId, setUserId] = useState<string | null>(null)
+  const [unread, setUnread] = useState(0)
 
   useEffect(() => {
     supabase.auth.getSession().then(async ({ data: { session } }) => {
       if (!session) { router.push('/login'); return }
+      setUserId(session.user.id)
       const { data } = await supabase
         .from('profiles')
         .select('role, secondary_role, full_name, color')
@@ -40,6 +44,35 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       setLoading(false)
     })
   }, [router])
+
+  // Pastille « réponses SMS non lues » sur l'item Pipeline (temps réel).
+  // Manager = tous les leads ; rep = les siens. Best-effort si la colonne
+  // unread_sms n'existe pas encore (migration) → 0.
+  useEffect(() => {
+    if (!profile || !userId) return
+    const refresh = async () => {
+      let q = supabase.from('leads').select('id', { count: 'exact', head: true }).eq('unread_sms', true)
+      if (!isManager(profile.role)) q = q.eq('rep_id', userId)
+      const { count, error } = await q
+      setUnread(error ? 0 : count ?? 0)
+    }
+    refresh()
+    const channel = supabase
+      .channel('nav-unread')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'leads' }, refresh)
+      .subscribe()
+    return () => { supabase.removeChannel(channel) }
+  }, [profile, userId])
+
+  // Badge sur l'icône de l'app installée (PWA) — supporté iOS 16.4+/Android
+  useEffect(() => {
+    const nav = navigator as Navigator & {
+      setAppBadge?: (n?: number) => Promise<void>
+      clearAppBadge?: () => Promise<void>
+    }
+    if (unread > 0) nav.setAppBadge?.(unread).catch(() => {})
+    else nav.clearAppBadge?.().catch(() => {})
+  }, [unread])
 
   const logout = async () => {
     await supabase.auth.signOut()
@@ -81,6 +114,13 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       }}>
         <Icon size={18} color={active ? '#69C9CA' : '#6B7280'} strokeWidth={active ? 2.4 : 2} />
         {item.label}
+        {item.href === '/pipeline' && unread > 0 && (
+          <span style={{
+            marginLeft: 'auto', minWidth: 18, height: 18, borderRadius: 999, background: '#EF4444',
+            color: '#FFF', fontSize: 10.5, fontWeight: 700, display: 'inline-flex',
+            alignItems: 'center', justifyContent: 'center', padding: '0 5px',
+          }}>{unread > 99 ? '99+' : unread}</span>
+        )}
       </Link>
     )
   }
@@ -138,7 +178,16 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
                 padding: '10px 4px 9px', textDecoration: 'none', gap: 4,
                 borderTop: active ? '2px solid #69C9CA' : '2px solid transparent',
               }}>
-                <Icon size={21} color={active ? '#69C9CA' : '#4B5563'} strokeWidth={active ? 2.5 : 2} />
+                <span style={{ position: 'relative', display: 'inline-flex' }}>
+                  <Icon size={21} color={active ? '#69C9CA' : '#4B5563'} strokeWidth={active ? 2.5 : 2} />
+                  {href === '/pipeline' && unread > 0 && (
+                    <span style={{
+                      position: 'absolute', top: -5, right: -9, minWidth: 15, height: 15, borderRadius: 999,
+                      background: '#EF4444', color: '#FFF', fontSize: 9, fontWeight: 700,
+                      display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: '0 4px',
+                    }}>{unread > 99 ? '99+' : unread}</span>
+                  )}
+                </span>
                 <span style={{
                   fontSize: 9.5, fontWeight: 600, letterSpacing: 0.3, textTransform: 'uppercase',
                   color: active ? '#69C9CA' : '#4B5563',

@@ -6,13 +6,15 @@ import {
   leadsToColumns, sourceLabel, SOURCE_LABELS, STAGES, type Lead,
 } from '@/lib/pipeline'
 import LeadDrawer from '@/components/pipeline/LeadDrawer'
+import PushToggle from '@/components/PushToggle'
 import { Plus, KanbanSquare } from 'lucide-react'
 
 const money = (n: number) =>
   new Intl.NumberFormat('fr-CA', { style: 'currency', currency: 'CAD', maximumFractionDigits: 0 }).format(n)
 
-const LEAD_COLS =
-  'id, name, phone, email, source, service, service_category, stage, rep_id, price, notes, needs_follow_up, created_at'
+// '*' plutôt qu'une liste de colonnes : le board survit si une migration
+// (ex. unread_sms) n'est pas encore appliquée en DB.
+const LEAD_COLS = '*'
 
 interface Profile { id: string; full_name: string | null }
 
@@ -83,6 +85,11 @@ export default function PipelinePage() {
     setSelected((s) => (s && s.id === leadId ? { ...s, stage } : s))
   }
 
+  // conversation ouverte → la pastille « a répondu » s'éteint tout de suite
+  const handleRead = (leadId: string) => {
+    setLeads((prev) => prev.map((l) => (l.id === leadId ? { ...l, unread_sms: false } : l)))
+  }
+
   // drop d'une carte sur une colonne : maj optimiste + route serveur (mêmes automatisations que le drawer)
   const dropLead = async (leadId: string, newStage: string) => {
     setDragOver(null)
@@ -105,6 +112,7 @@ export default function PipelinePage() {
         <h1 style={{ fontSize: 24, fontWeight: 700, color: '#111827', margin: 0 }}>Pipeline</h1>
         <span style={{ color: '#6B7280', fontSize: 13 }}>{visibleLeads.length} leads</span>
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+          <PushToggle />
           {manager && (
             <select value={repFilter} onChange={(e) => setRepFilter(e.target.value)} style={selectStyle}>
               <option value="all">Tous les reps</option>
@@ -153,11 +161,23 @@ export default function PipelinePage() {
                       draggable
                       onDragStart={(e) => { e.dataTransfer.setData('text/plain', lead.id); e.dataTransfer.effectAllowed = 'move' }}
                       onDragEnd={() => setDragOver(null)}
-                      style={{ ...cardStyle, ...(lead.needs_follow_up ? { borderColor: '#F59E0B', background: '#FFFBEB' } : null) }}
+                      style={{
+                        ...cardStyle,
+                        // priorité : réponse SMS non lue (vert) > à relancer (ambre)
+                        ...(lead.unread_sms
+                          ? { borderColor: '#10B981', background: '#ECFDF5', boxShadow: '0 0 0 1px #10B981' }
+                          : lead.needs_follow_up ? { borderColor: '#F59E0B', background: '#FFFBEB' } : null),
+                      }}
                     >
                       <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                        {lead.needs_follow_up && <span title="À relancer" style={{ fontSize: 12 }}>⏰</span>}
-                        <div style={{ fontSize: 14, fontWeight: 600, color: '#111827' }}>{lead.name}</div>
+                        {lead.unread_sms && <span title="A répondu par SMS" style={{ fontSize: 12 }}>💬</span>}
+                        {lead.needs_follow_up && !lead.unread_sms && <span title="À relancer" style={{ fontSize: 12 }}>⏰</span>}
+                        <div style={{ fontSize: 14, fontWeight: 600, color: '#111827', minWidth: 0 }}>{lead.name}</div>
+                        {lead.unread_sms && (
+                          <span style={{ marginLeft: 'auto', fontSize: 9, fontWeight: 700, color: '#065F46', background: '#A7F3D0', padding: '1px 6px', borderRadius: 999, textTransform: 'uppercase', flexShrink: 0 }}>
+                            Réponse
+                          </span>
+                        )}
                       </div>
                       {lead.service && <div style={{ fontSize: 12, color: '#6B7280', marginTop: 2 }}>{lead.service}</div>}
                       {lead.price ? <div style={{ fontSize: 13, fontWeight: 700, color: col.color, marginTop: 4 }}>{money(Number(lead.price))}</div> : null}
@@ -180,8 +200,12 @@ export default function PipelinePage() {
         <LeadDrawer
           lead={selected}
           repName={selected.rep_id ? profileName[selected.rep_id] ?? null : null}
+          manager={manager}
+          userId={userId}
+          userName={userId ? profileName[userId] ?? null : null}
           onClose={() => setSelected(null)}
           onStageChange={handleStageChange}
+          onRead={handleRead}
         />
       )}
 

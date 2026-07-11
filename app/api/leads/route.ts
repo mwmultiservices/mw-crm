@@ -1,5 +1,6 @@
 import { supabaseAdmin } from '@/lib/supabaseAdmin'
 import { sendSms } from '@/lib/sms'
+import { sendPushToTeam } from '@/lib/push'
 import { AUTOMATIONS } from '@/lib/automations'
 
 // ============================================================
@@ -51,6 +52,13 @@ export async function POST(request: Request) {
   if (error) {
     return Response.json({ error: error.message }, { status: 500 })
   }
+
+  // Notification push aux managers : nouveau lead à rappeler rapidement.
+  await sendPushToTeam({
+    title: `🆕 Nouveau lead — ${lead.name}`,
+    body: [lead.service, lead.phone].filter(Boolean).join(' · ') || 'À rappeler rapidement',
+    url: '/pipeline',
+  }).catch((e) => console.error('[leads] push:', e))
 
   // Automatisation : SMS de bienvenue sur leads entrants (web/Meta) avec numéro.
   let welcomeSent = false

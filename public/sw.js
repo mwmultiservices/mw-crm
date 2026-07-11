@@ -15,6 +15,35 @@ self.addEventListener('activate', (event) => {
   )
 })
 
+// Web Push — notification sur l'écran d'accueil (SMS entrant, nouveau lead).
+// Payload JSON : { title, body, url }
+self.addEventListener('push', (event) => {
+  let data = {}
+  try { data = event.data ? event.data.json() : {} } catch { /* payload non-JSON */ }
+  event.waitUntil(
+    self.registration.showNotification(data.title || 'MW Multiservices', {
+      body: data.body || '',
+      icon: '/icons/icon-192.png',
+      badge: '/icons/icon-192.png',
+      tag: data.url || 'mw-crm', // regroupe les notifs de la même page
+      data: { url: data.url || '/pipeline' },
+    })
+  )
+})
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close()
+  const url = (event.notification.data && event.notification.data.url) || '/'
+  event.waitUntil(
+    clients.matchAll({ type: 'window', includeUncontrolled: true }).then((list) => {
+      for (const c of list) {
+        if ('focus' in c) { c.navigate(url); return c.focus() }
+      }
+      return clients.openWindow(url)
+    })
+  )
+})
+
 self.addEventListener('fetch', (event) => {
   const { request } = event
   if (request.method !== 'GET') return
