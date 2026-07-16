@@ -268,7 +268,7 @@ function PersoPayes({ profileId, role }: { profileId: string; role: string }) {
 // ============================================================
 // Petits composants UI
 // ============================================================
-const page: React.CSSProperties = { fontFamily: 'Inter, sans-serif', maxWidth: 900, margin: '0 auto', padding: '8px 4px 80px' }
+const page: React.CSSProperties = { fontFamily: 'Inter, sans-serif', maxWidth: 900, margin: '0 auto', padding: '12px 16px 84px' }
 
 function WeekNav({ weekOf, onChange }: { weekOf: string; onChange: (w: string) => void }) {
   return (

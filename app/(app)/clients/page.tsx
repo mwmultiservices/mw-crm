@@ -75,7 +75,7 @@ export default function ClientsPage() {
   }
 
   return (
-    <div style={{ fontFamily: 'Inter, sans-serif', maxWidth: 1000, margin: '0 auto', padding: '8px 4px 80px' }}>
+    <div style={{ fontFamily: 'Inter, sans-serif', maxWidth: 1000, margin: '0 auto', padding: '12px 16px 84px' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 16 }}>
         <h1 style={{ fontSize: 24, fontWeight: 700, color: '#111827', margin: 0 }}>Clients</h1>
         <span style={{ color: '#6B7280', fontSize: 13 }}>{clients.length}</span>

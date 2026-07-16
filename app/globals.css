@@ -58,6 +58,7 @@ html, body {
 .mw-shell {
   display: flex;
   height: 100vh;
+  height: 100dvh; /* évite le "saut" du bottom-nav quand la barre d'adresse mobile se replie */
   background: var(--mw-gray-bg);
 }
 .mw-main {
@@ -70,6 +71,9 @@ html, body {
 .mw-content {
   flex: 1;
   overflow: auto;
+  -webkit-overflow-scrolling: touch;
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
 }
 
 /* Sidebar — cachée en mobile */
@@ -80,10 +84,19 @@ html, body {
   display: flex;
   background: #000;
   border-top: 1px solid rgba(255,255,255,0.08);
-  padding-bottom: env(safe-area-inset-bottom);
+  padding-bottom: max(10px, env(safe-area-inset-bottom));
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
   flex-shrink: 0;
 }
-.mw-header-mobile { display: flex; }
+.mw-header-mobile {
+  display: flex;
+  flex-shrink: 0;
+  padding-top: env(safe-area-inset-top);
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
+  background: #000;
+}
 
 @media (min-width: 1024px) {
   .mw-sidebar {

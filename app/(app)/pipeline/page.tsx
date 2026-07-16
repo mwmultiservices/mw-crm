@@ -106,7 +106,7 @@ export default function PipelinePage() {
   }
 
   return (
-    <div style={{ fontFamily: 'Inter, sans-serif', padding: '8px 4px 80px' }}>
+    <div style={{ fontFamily: 'Inter, sans-serif', padding: '12px 16px 84px' }}>
       {/* en-tête */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 18 }}>
         <h1 style={{ fontSize: 24, fontWeight: 700, color: '#111827', margin: 0 }}>Pipeline</h1>

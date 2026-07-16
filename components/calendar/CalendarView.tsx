@@ -74,7 +74,7 @@ export default function CalendarView({ kind }: { kind: 'fenetre' | 'paysagement'
   const onSaved = () => { setModal(null); loadJobs(weekStart) }
 
   return (
-    <div style={{ fontFamily: 'Inter, sans-serif', padding: '8px 4px 80px' }}>
+    <div style={{ fontFamily: 'Inter, sans-serif', padding: '12px 16px 84px' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 16 }}>
         <h1 style={{ fontSize: 22, fontWeight: 700, color: '#111827', margin: 0 }}>{cfg.title}</h1>
         <span style={{ color: '#6B7280', fontSize: 13 }}>{total} job{total > 1 ? 's' : ''}</span>

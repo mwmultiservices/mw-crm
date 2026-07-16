@@ -77,7 +77,7 @@ export default function PointagePage() {
   if (loading) return <div style={{ padding: 40, textAlign: 'center', color: '#9CA3AF', fontFamily: 'Inter, sans-serif' }}>Chargement…</div>
 
   return (
-    <div style={{ fontFamily: 'Inter, sans-serif', maxWidth: 560, margin: '0 auto', padding: '8px 4px 80px' }}>
+    <div style={{ fontFamily: 'Inter, sans-serif', maxWidth: 560, margin: '0 auto', padding: '12px 16px 84px' }}>
       <h1 style={{ fontSize: 24, fontWeight: 700, color: '#111827', margin: '0 0 4px' }}>Pointage</h1>
       <p style={{ color: '#6B7280', fontSize: 13, margin: '0 0 20px' }}>{formatWeekLabel(weekOf)}</p>
 
