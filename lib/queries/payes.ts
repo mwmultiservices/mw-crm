@@ -136,6 +136,32 @@ export async function computeCommissions(weekOf: string): Promise<{ reps: number
   return { reps: repUpserts.length, techs: techUpserts.length }
 }
 
+// --- JOBS FAITS (datasheet « ce que je dois payer ») ------------------------
+export interface DoneJobRow {
+  id: string
+  title: string | null
+  service: string | null
+  type: string
+  start_at: string | null
+  price: number | null
+  assigned_ids: string[]
+}
+
+// Jobs complétés (« done ») sur `weeks` semaine(s) à partir de weekOf — tous
+// types confondus ; le détail par employé se filtre via assigned_ids.
+export async function getDoneJobs(weekOf: string, weeks = 1): Promise<DoneJobRow[]> {
+  const { startISO } = weekRangeISO(weekOf)
+  const { endISO } = weekRangeISO(addWeeks(weekOf, weeks - 1))
+  const { data } = await supabase
+    .from('jobs')
+    .select('id, title, service, type, start_at, price, assigned_ids')
+    .eq('status', 'done')
+    .gte('start_at', startISO)
+    .lt('start_at', endISO)
+    .order('start_at', { ascending: true })
+  return (data as DoneJobRow[]) ?? []
+}
+
 // --- TIMESHEETS / HEURES (admin) -------------------------------------------
 export async function getTimesheetsWeek(weekOf: string): Promise<EmployeeHours[]> {
   const end = addWeeks(weekOf, 1)

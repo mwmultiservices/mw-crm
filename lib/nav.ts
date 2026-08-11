@@ -2,7 +2,7 @@
 // Sidebar desktop = NAV_BY_ROLE (sections) ; bottom-nav mobile = MOBILE_NAV_BY_ROLE (max ~5).
 import {
   Home, Map, BarChart2, KanbanSquare, CalendarDays, Leaf,
-  Users, FileText, Wallet, Clock, Database, User,
+  Users, FileText, Wallet, Clock, Database, User, Sprout,
 } from 'lucide-react'
 
 type IconType = React.ComponentType<{ size?: number; color?: string; strokeWidth?: number }>
@@ -27,6 +27,7 @@ const I = {
   baseD2D:    { href: '/base-de-donnees',         label: 'Base D2D',     Icon: Database as IconType },
   calFen:     { href: '/calendrier/fenetres',     label: 'Fenêtres',     Icon: CalendarDays as IconType },
   calPays:    { href: '/calendrier/paysagement',  label: 'Paysagement',  Icon: Leaf as IconType },
+  gazon:      { href: '/gazon',                   label: 'Run gazon',    Icon: Sprout as IconType },
   soumissions:{ href: '/soumissions',             label: 'Soumissions',  Icon: FileText as IconType },
   payes:      { href: '/payes',                   label: 'Payes',        Icon: Wallet as IconType },
   payesPerso: { href: '/payes',                   label: 'Mes payes',    Icon: Wallet as IconType },
@@ -38,14 +39,14 @@ export const NAV_BY_ROLE: Record<string, NavSection[]> = {
   admin: [
     { title: 'Tableau de bord', items: [I.accueil, I.carte, I.dashboard] },
     { title: 'Ventes',          items: [I.pipeline, I.clients, I.baseD2D] },
-    { title: 'Planification',   items: [I.calFen, I.calPays] },
+    { title: 'Planification',   items: [I.calFen, I.calPays, I.gazon] },
     { title: 'Finance',         items: [I.soumissions, I.payes] },
     { title: 'Compte',          items: [I.profil] },
   ],
   lead: [
     { title: 'Principal',     items: [I.accueil, I.carte, I.dashboard] },
     { title: 'Ventes',        items: [I.pipeline, I.clients] },
-    { title: 'Planification', items: [I.calFen, I.calPays] },
+    { title: 'Planification', items: [I.calFen, I.calPays, I.gazon] },
     { title: 'Finance',       items: [I.soumissions, I.payesPerso] },
     { title: 'Compte',        items: [I.profil] },
   ],
@@ -61,7 +62,7 @@ export const NAV_BY_ROLE: Record<string, NavSection[]> = {
     { title: 'Compte',     items: [I.profil] },
   ],
   terrain: [
-    { title: 'Mon espace', items: [I.pointage, I.calPays] },
+    { title: 'Mon espace', items: [I.pointage, I.gazon, I.calPays] },
     { title: 'Finance',    items: [I.payesPerso] },
     { title: 'Compte',     items: [I.profil] },
   ],
@@ -70,7 +71,7 @@ export const NAV_BY_ROLE: Record<string, NavSection[]> = {
 // Items supplémentaires si capacité secondaire paysagement (ex. rep + terrain)
 export const TERRAIN_EXTRA: NavSection = {
   title: 'Paysagement',
-  items: [I.pointage, I.calPays],
+  items: [I.pointage, I.gazon, I.calPays],
 }
 
 export const MOBILE_NAV_BY_ROLE: Record<string, NavItem[]> = {
@@ -78,7 +79,7 @@ export const MOBILE_NAV_BY_ROLE: Record<string, NavItem[]> = {
   lead:    [I.accueil, I.pipeline, I.carte, I.calFen, I.profil],
   rep:     [I.carte, I.pipeline, I.dashboard, I.payesPerso, I.profil],
   tech:    [I.calFen, I.pipeline, I.soumissions, I.payesPerso, I.profil],
-  terrain: [I.pointage, I.calPays, I.payesPerso, I.profil],
+  terrain: [I.pointage, I.gazon, I.calPays, I.payesPerso, I.profil],
 }
 
 // Page d'atterrissage par défaut selon le rôle

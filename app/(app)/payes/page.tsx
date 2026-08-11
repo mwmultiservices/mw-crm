@@ -1,15 +1,15 @@
 'use client'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { supabase } from '@/lib/supabase'
 import { isManager } from '@/lib/roles'
 import {
   getCommissions, markCommissionPaid, computeCommissions,
   getTimesheetsWeek, markTimesheetsPaid,
-  getMyCommission, getMyTimesheets,
-  type CommissionRow, type EmployeeHours, type TimesheetRow,
+  getMyCommission, getMyTimesheets, getDoneJobs,
+  type CommissionRow, type EmployeeHours, type TimesheetRow, type DoneJobRow,
 } from '@/lib/queries/payes'
-import { mondayOf, addWeeks, formatWeekLabel, money, money2 } from '@/lib/payes'
-import { ChevronLeft, ChevronRight, RefreshCw, Check } from 'lucide-react'
+import { mondayOf, addWeeks, formatWeekLabel, periodStartOf, formatPeriodLabel, money, money2 } from '@/lib/payes'
+import { ChevronLeft, ChevronRight, RefreshCw, Check, Send } from 'lucide-react'
 
 export default function PayesPage() {
   const [role, setRole] = useState<string | null>(null)
@@ -30,65 +30,191 @@ export default function PayesPage() {
 
   return (
     <div style={page}>
-      {isManager(role) ? <AdminPayes /> : <PersoPayes profileId={userId!} role={role ?? 'rep'} />}
+      {isManager(role) ? <AdminPayes userId={userId!} /> : <PersoPayes profileId={userId!} role={role ?? 'rep'} />}
     </div>
   )
 }
 
 // ============================================================
-// VUE ADMIN — datasheets commissions + heures
+// VUE ADMIN — datasheets commissions + heures, à la semaine OU
+// à la période de paye de 2 semaines (ex. 3 au 16 août).
 // ============================================================
-function AdminPayes() {
+
+// Lignes de commissions fusionnées sur la période (1 ligne DB par semaine).
+interface MergedComm {
+  key: string
+  profile_id: string
+  type: string
+  name: string | null
+  sales: number
+  rate: number
+  commission: number
+  jobs: number
+  deals: number
+  bonus: number
+  paid: boolean
+  ids: string[]
+}
+
+function AdminPayes({ userId }: { userId: string }) {
+  const [mode, setMode] = useState<'week' | 'period'>('week')
   const [weekOf, setWeekOf] = useState(mondayOf())
   const [tab, setTab] = useState<'comm' | 'hours'>('comm')
-  const [comms, setComms] = useState<CommissionRow[]>([])
+  const [rawComms, setRawComms] = useState<CommissionRow[]>([])
   const [hours, setHours] = useState<EmployeeHours[]>([])
+  const [doneJobs, setDoneJobs] = useState<DoneJobRow[]>([])
   const [loading, setLoading] = useState(true)
   const [computing, setComputing] = useState(false)
+  const [sendingSms, setSendingSms] = useState(false)
   const [msg, setMsg] = useState<string | null>(null)
+  const [openRow, setOpenRow] = useState<string | null>(null)
+
+  const period = mode === 'period'
+  const weekB = addWeeks(weekOf, 1)
 
   const load = useCallback(async () => {
     setLoading(true)
-    const [c, h] = await Promise.all([getCommissions(weekOf), getTimesheetsWeek(weekOf)])
-    setComms(c)
-    setHours(h)
+    const [cA, cB, hA, hB, dj] = await Promise.all([
+      getCommissions(weekOf),
+      period ? getCommissions(weekB) : Promise.resolve([] as CommissionRow[]),
+      getTimesheetsWeek(weekOf),
+      period ? getTimesheetsWeek(weekB) : Promise.resolve([] as EmployeeHours[]),
+      getDoneJobs(weekOf, period ? 2 : 1),
+    ])
+    setRawComms([...cA, ...cB])
+    // fusionne les heures des 2 semaines par employé
+    const byId = new Map<string, EmployeeHours>()
+    for (const e of [...hA, ...hB]) {
+      const ex = byId.get(e.profile_id)
+      if (!ex) byId.set(e.profile_id, { ...e, rows: [...e.rows] })
+      else {
+        ex.rows.push(...e.rows)
+        ex.totalHours = Math.round((ex.totalHours + e.totalHours) * 100) / 100
+        ex.pay = Math.round((ex.pay + e.pay) * 100) / 100
+        ex.paid = ex.paid && e.paid
+      }
+    }
+    setHours([...byId.values()])
+    setDoneJobs(dj)
     setLoading(false)
-  }, [weekOf])
+  }, [weekOf, weekB, period])
 
   useEffect(() => { load() }, [load])
 
+  const switchMode = (m: 'week' | 'period') => {
+    setMode(m)
+    if (m === 'period') setWeekOf(periodStartOf(weekOf))
+  }
+
   const recompute = async () => {
     setComputing(true)
-    const r = await computeCommissions(weekOf)
+    const r1 = await computeCommissions(weekOf)
+    const r2 = period ? await computeCommissions(weekB) : null
     setComputing(false)
-    setMsg(`Recalculé : ${r.reps} rep(s), ${r.techs} tech(s)`)
+    setMsg(`Recalculé : ${r1.reps + (r2?.reps ?? 0)} ligne(s) rep, ${r1.techs + (r2?.techs ?? 0)} ligne(s) tech`)
     setTimeout(() => setMsg(null), 3000)
     load()
   }
 
-  const reps = comms.filter((c) => c.type === 'rep')
-  const techs = comms.filter((c) => c.type === 'tech')
+  const sendList = async () => {
+    setSendingSms(true)
+    try {
+      const res = await fetch('/api/payes/sms', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ profile_id: userId, week_of: weekOf, weeks: period ? 2 : 1 }),
+      })
+      const data = await res.json()
+      setMsg(res.ok ? 'Liste des salaires envoyée par texto 📱' : `Texto : ${data.error ?? 'erreur'}`)
+    } catch {
+      setMsg('Texto : envoi impossible')
+    }
+    setSendingSms(false)
+    setTimeout(() => setMsg(null), 4000)
+  }
 
-  const togglePaid = async (c: CommissionRow) => {
-    await markCommissionPaid(c.id, !c.paid)
-    setComms((prev) => prev.map((x) => (x.id === c.id ? { ...x, paid: !x.paid } : x)))
+  const merged = useMemo(() => {
+    const m = new Map<string, MergedComm>()
+    for (const c of rawComms) {
+      const k = `${c.profile_id}:${c.type}`
+      const e = m.get(k)
+      if (!e) {
+        m.set(k, {
+          key: k, profile_id: c.profile_id, type: c.type, name: c.profiles?.full_name ?? null,
+          sales: Number(c.sales_amount) || 0, rate: Number(c.rate) || 0, commission: Number(c.commission_amount) || 0,
+          jobs: c.jobs_count || 0, deals: c.deals_closed || 0, bonus: Number(c.bonus) || 0, paid: c.paid, ids: [c.id],
+        })
+      } else {
+        e.sales += Number(c.sales_amount) || 0
+        e.commission += Number(c.commission_amount) || 0
+        e.jobs += c.jobs_count || 0
+        e.deals += c.deals_closed || 0
+        e.bonus += Number(c.bonus) || 0
+        e.paid = e.paid && c.paid
+        e.ids.push(c.id)
+      }
+    }
+    return [...m.values()].sort((a, b) => b.commission - a.commission)
+  }, [rawComms])
+
+  const reps = merged.filter((c) => c.type === 'rep')
+  const techs = merged.filter((c) => c.type === 'tech')
+
+  const totalDue = merged.filter((c) => !c.paid).reduce((s, c) => s + c.commission + c.bonus, 0)
+    + hours.filter((h) => !h.paid).reduce((s, h) => s + h.pay, 0)
+  const totalAll = merged.reduce((s, c) => s + c.commission + c.bonus, 0) + hours.reduce((s, h) => s + h.pay, 0)
+
+  const togglePaid = async (c: MergedComm) => {
+    const target = !c.paid
+    await Promise.all(c.ids.map((id) => markCommissionPaid(id, target)))
+    setRawComms((prev) => prev.map((x) => (c.ids.includes(x.id) ? { ...x, paid: target } : x)))
   }
   const toggleHoursPaid = async (e: EmployeeHours) => {
-    await markTimesheetsPaid(e.profile_id, weekOf, !e.paid)
-    setHours((prev) => prev.map((x) => (x.profile_id === e.profile_id ? { ...x, paid: !x.paid } : x)))
+    const target = !e.paid
+    await markTimesheetsPaid(e.profile_id, weekOf, target)
+    if (period) await markTimesheetsPaid(e.profile_id, weekB, target)
+    setHours((prev) => prev.map((x) => (x.profile_id === e.profile_id ? { ...x, paid: target } : x)))
   }
+
+  const jobsOf = (profileId: string) => doneJobs.filter((j) => j.assigned_ids?.includes(profileId))
 
   return (
     <>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 16 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 12 }}>
         <h1 style={{ fontSize: 24, fontWeight: 700, color: '#111827', margin: 0 }}>Payes</h1>
-        <WeekNav weekOf={weekOf} onChange={setWeekOf} />
-        {tab === 'comm' && (
-          <button onClick={recompute} disabled={computing} style={{ ...btn, marginLeft: 'auto' }}>
-            <RefreshCw size={15} />{computing ? 'Calcul…' : 'Recalculer la semaine'}
+        <div style={{ display: 'flex', gap: 4, background: '#F3F4F6', borderRadius: 999, padding: 3 }}>
+          {([['week', 'Semaine'], ['period', '2 semaines']] as const).map(([m, l]) => (
+            <button key={m} onClick={() => switchMode(m)} style={{
+              padding: '5px 12px', borderRadius: 999, border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 700,
+              background: mode === m ? '#111827' : 'transparent', color: mode === m ? '#FFF' : '#6B7280',
+            }}>{l}</button>
+          ))}
+        </div>
+        <PeriodNav weekOf={weekOf} mode={mode} onChange={setWeekOf} />
+        <div style={{ display: 'flex', gap: 8, marginLeft: 'auto' }}>
+          <button onClick={sendList} disabled={sendingSms} style={{ ...btn, background: '#111827', color: '#FFF' }}>
+            <Send size={14} />{sendingSms ? '…' : 'Liste par texto'}
           </button>
-        )}
+          {tab === 'comm' && (
+            <button onClick={recompute} disabled={computing} style={btn}>
+              <RefreshCw size={15} />{computing ? 'Calcul…' : period ? 'Recalculer la période' : 'Recalculer la semaine'}
+            </button>
+          )}
+        </div>
       </div>
+
+      {/* total à payer */}
+      {!loading && (
+        <div style={{ display: 'flex', gap: 10, marginBottom: 14, flexWrap: 'wrap' }}>
+          <div style={{ flex: 1, minWidth: 150, background: '#FFF', border: '1px solid #E5E7EB', borderRadius: 12, padding: '10px 14px' }}>
+            <div style={{ fontSize: 10, fontWeight: 700, color: '#6B7280', textTransform: 'uppercase', letterSpacing: '0.05em' }}>À payer ({period ? '2 sem.' : 'semaine'})</div>
+            <div style={{ fontSize: 24, fontWeight: 800, color: totalDue > 0 ? '#B45309' : '#10B981' }}>{money(totalDue)}</div>
+          </div>
+          <div style={{ flex: 1, minWidth: 150, background: '#FFF', border: '1px solid #E5E7EB', borderRadius: 12, padding: '10px 14px' }}>
+            <div style={{ fontSize: 10, fontWeight: 700, color: '#6B7280', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Total payes {period ? 'de la période' : 'de la semaine'}</div>
+            <div style={{ fontSize: 24, fontWeight: 800, color: '#0D6E6F' }}>{money(totalAll)}</div>
+          </div>
+        </div>
+      )}
 
       {msg && <div style={{ background: '#D1FAE5', color: '#065F46', padding: 10, borderRadius: 10, fontSize: 13, marginBottom: 12 }}>{msg}</div>}
 
@@ -103,15 +229,15 @@ function AdminPayes() {
       ) : tab === 'comm' ? (
         <>
           <SectionTitle>Reps & ventes</SectionTitle>
-          {reps.length === 0 ? <Empty text="Aucune commission rep. Clique « Recalculer la semaine »." /> : (
+          {reps.length === 0 ? <Empty text="Aucune commission rep. Clique « Recalculer »." /> : (
             <Card>
               <Header cols="1fr 90px 56px 90px 70px 110px" labels={['Employé', 'Ventes', 'Taux', 'Commission', 'Bonus', '']} />
               {reps.map((c) => (
-                <Row key={c.id} cols="1fr 90px 56px 90px 70px 110px">
-                  <NameCell name={c.profiles?.full_name} sub={`${c.deals_closed} vente(s)`} />
-                  <span>{money(c.sales_amount)}</span>
+                <Row key={c.key} cols="1fr 90px 56px 90px 70px 110px">
+                  <NameCell name={c.name} sub={`${c.deals} vente(s)`} />
+                  <span>{money(c.sales)}</span>
                   <Badge>{c.rate}%</Badge>
-                  <strong style={{ color: '#0D6E6F' }}>{money(c.commission_amount)}</strong>
+                  <strong style={{ color: '#0D6E6F' }}>{money(c.commission)}</strong>
                   <span>{c.bonus > 0 ? <Badge green>+{money(c.bonus)}</Badge> : '—'}</span>
                   <PayBtn paid={c.paid} onClick={() => togglePaid(c)} />
                 </Row>
@@ -120,31 +246,77 @@ function AdminPayes() {
           )}
 
           <SectionTitle>Techniciens fenêtres (18%)</SectionTitle>
-          {techs.length === 0 ? <Empty text="Aucune commission tech (jobs fenêtres « done » de la semaine)." /> : (
+          {techs.length === 0 ? <Empty text="Aucune commission tech (jobs fenêtres « done » de la période)." /> : (
             <Card>
               <Header cols="1fr 70px 90px 90px 110px" labels={['Employé', 'Jobs', 'Revenu', 'Commission', '']} />
               {techs.map((c) => (
-                <Row key={c.id} cols="1fr 70px 90px 90px 110px">
-                  <NameCell name={c.profiles?.full_name} sub="Tech fenêtres" />
-                  <span>{c.jobs_count}</span>
-                  <span>{money(c.sales_amount)}</span>
-                  <strong style={{ color: '#0D6E6F' }}>{money(c.commission_amount)}</strong>
-                  <PayBtn paid={c.paid} onClick={() => togglePaid(c)} />
-                </Row>
+                <div key={c.key}>
+                  <div role="button" tabIndex={0} onClick={() => setOpenRow(openRow === c.key ? null : c.key)} style={{ cursor: 'pointer' }}>
+                    <Row cols="1fr 70px 90px 90px 110px">
+                      <NameCell name={c.name} sub={`Tech fenêtres · ${openRow === c.key ? 'replier' : 'voir les jobs'}`} />
+                      <span>{c.jobs}</span>
+                      <span>{money(c.sales)}</span>
+                      <strong style={{ color: '#0D6E6F' }}>{money(c.commission)}</strong>
+                      <PayBtn paid={c.paid} onClick={(ev) => { ev.stopPropagation(); togglePaid(c) }} />
+                    </Row>
+                  </div>
+                  {openRow === c.key && <JobsDetail jobs={jobsOf(c.profile_id)} />}
+                </div>
               ))}
             </Card>
           )}
         </>
       ) : (
-        <HoursDatasheet hours={hours} onTogglePaid={toggleHoursPaid} />
+        <HoursDatasheet hours={hours} onTogglePaid={toggleHoursPaid} jobsOf={jobsOf} />
       )}
     </>
   )
 }
 
-function HoursDatasheet({ hours, onTogglePaid }: { hours: EmployeeHours[]; onTogglePaid: (e: EmployeeHours) => void }) {
+// Détail « toutes les jobs faites » d'un employé sur la période.
+function JobsDetail({ jobs }: { jobs: DoneJobRow[] }) {
+  if (!jobs.length) return <div style={{ padding: '4px 14px 12px', background: '#F9FAFB', fontSize: 12, color: '#9CA3AF' }}>Aucun job « complété » assigné sur la période.</div>
+  return (
+    <div style={{ padding: '0 14px 12px', background: '#F9FAFB' }}>
+      {jobs.map((j) => {
+        const n = j.assigned_ids?.length || 1
+        const share = (Number(j.price) || 0) / n
+        return (
+          <div key={j.id} style={{ display: 'grid', gridTemplateColumns: '80px 1fr 80px 90px', gap: 8, padding: '6px 0', fontSize: 12, color: '#6B7280', borderTop: '1px solid #F3F4F6' }}>
+            <span style={{ textTransform: 'capitalize', fontWeight: 600, color: '#374151' }}>
+              {j.start_at ? new Date(j.start_at).toLocaleDateString('fr-CA', { weekday: 'short', day: 'numeric', month: 'short' }) : '—'}
+            </span>
+            <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              {j.type === 'fenetre' ? '🪟' : j.type === 'gazon' ? '🌿' : '🔨'} {j.title || j.service || 'Job'}
+            </span>
+            <span>{money(Number(j.price) || 0)}{n > 1 ? ` ÷${n}` : ''}</span>
+            <span style={{ textAlign: 'right', fontWeight: 700, color: '#0D6E6F' }}>{money(share)}</span>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+function PeriodNav({ weekOf, mode, onChange }: { weekOf: string; mode: 'week' | 'period'; onChange: (w: string) => void }) {
+  const step = mode === 'period' ? 2 : 1
+  const label = mode === 'period' ? formatPeriodLabel(weekOf) : formatWeekLabel(weekOf)
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+      <button onClick={() => onChange(addWeeks(weekOf, -step))} style={navBtn} aria-label="Précédent"><ChevronLeft size={16} /></button>
+      <span style={{ fontSize: 13, fontWeight: 600, color: '#374151', minWidth: 170, textAlign: 'center' }}>{label}</span>
+      <button onClick={() => onChange(addWeeks(weekOf, step))} style={navBtn} aria-label="Suivant"><ChevronRight size={16} /></button>
+    </div>
+  )
+}
+
+function HoursDatasheet({ hours, onTogglePaid, jobsOf }: {
+  hours: EmployeeHours[]
+  onTogglePaid: (e: EmployeeHours) => void
+  jobsOf: (profileId: string) => DoneJobRow[]
+}) {
   const [open, setOpen] = useState<string | null>(null)
-  if (hours.length === 0) return <Empty text="Aucune heure pointée cette semaine." />
+  if (hours.length === 0) return <Empty text="Aucune heure pointée sur la période." />
   return (
     <Card>
       {hours.map((e, i) => (
@@ -157,16 +329,24 @@ function HoursDatasheet({ hours, onTogglePaid }: { hours: EmployeeHours[]; onTog
             <PayBtn paid={e.paid} onClick={(ev) => { ev.stopPropagation(); onTogglePaid(e) }} />
           </div>
           {open === e.profile_id && (
-            <div style={{ padding: '0 14px 12px', background: '#F9FAFB' }}>
-              {e.rows.map((r) => (
-                <div key={r.id} style={{ display: 'grid', gridTemplateColumns: '1fr 70px 70px 60px', gap: 8, padding: '6px 0', fontSize: 12, color: '#6B7280' }}>
-                  <span style={{ textTransform: 'capitalize', fontWeight: 600, color: '#374151' }}>{new Date(r.date + 'T00:00:00').toLocaleDateString('fr-CA', { weekday: 'short', day: 'numeric', month: 'short' })}</span>
-                  <span>{r.clock_in ? new Date(r.clock_in).toLocaleTimeString('fr-CA', { hour: '2-digit', minute: '2-digit' }) : '—'}</span>
-                  <span>{r.clock_out ? new Date(r.clock_out).toLocaleTimeString('fr-CA', { hour: '2-digit', minute: '2-digit' }) : '—'}</span>
-                  <span style={{ textAlign: 'right', fontWeight: 700, color: '#697035' }}>{(Number(r.hours) || 0).toFixed(1)}h</span>
-                </div>
-              ))}
-            </div>
+            <>
+              <div style={{ padding: '0 14px 12px', background: '#F9FAFB' }}>
+                {e.rows.map((r) => (
+                  <div key={r.id} style={{ display: 'grid', gridTemplateColumns: '1fr 70px 70px 60px', gap: 8, padding: '6px 0', fontSize: 12, color: '#6B7280' }}>
+                    <span style={{ textTransform: 'capitalize', fontWeight: 600, color: '#374151' }}>{new Date(r.date + 'T00:00:00').toLocaleDateString('fr-CA', { weekday: 'short', day: 'numeric', month: 'short' })}</span>
+                    <span>{r.clock_in ? new Date(r.clock_in).toLocaleTimeString('fr-CA', { hour: '2-digit', minute: '2-digit' }) : '—'}</span>
+                    <span>{r.clock_out ? new Date(r.clock_out).toLocaleTimeString('fr-CA', { hour: '2-digit', minute: '2-digit' }) : '—'}</span>
+                    <span style={{ textAlign: 'right', fontWeight: 700, color: '#697035' }}>{(Number(r.hours) || 0).toFixed(1)}h</span>
+                  </div>
+                ))}
+              </div>
+              {jobsOf(e.profile_id).length > 0 && (
+                <>
+                  <div style={{ padding: '6px 14px 0', background: '#F9FAFB', fontSize: 10, fontWeight: 700, color: '#9CA3AF', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Jobs complétés (période)</div>
+                  <JobsDetail jobs={jobsOf(e.profile_id)} />
+                </>
+              )}
+            </>
           )}
         </div>
       ))}

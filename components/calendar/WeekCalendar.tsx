@@ -86,11 +86,14 @@ export default function WeekCalendar({
                           const mine = !!currentUserId && job.assigned_ids?.includes(currentUserId)
                           const done = job.status === 'done'
                           const canceled = job.status === 'canceled'
+                          const dispo = job.status === 'dispo' // slot mauve « à vendre »
                           const gpsUrl = jobDirectionsUrl(job)
                           return (
                             <div key={job.id} role="button" tabIndex={0} onClick={() => onJobClick(job)} style={{
-                              textAlign: 'left', border: `1px solid ${mine ? lane.color : '#E5E7EB'}`,
-                              borderLeft: `3px solid ${lane.color}`, borderRadius: 8, background: mine ? lane.color + '12' : '#FFF',
+                              textAlign: 'left',
+                              border: dispo ? '1px solid #8B5CF6' : `1px solid ${mine ? lane.color : '#E5E7EB'}`,
+                              borderLeft: `3px solid ${dispo ? '#8B5CF6' : lane.color}`, borderRadius: 8,
+                              background: dispo ? '#F5F3FF' : mine ? lane.color + '12' : '#FFF',
                               padding: 8, cursor: 'pointer', opacity: canceled ? 0.5 : 1,
                             }}>
                               <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -98,6 +101,7 @@ export default function WeekCalendar({
                                   {fmtTime(job.start_at)}{job.end_at ? `–${fmtTime(job.end_at)}` : ''}
                                   {done && <span style={{ marginLeft: 6, color: '#10B981' }}>✓</span>}
                                   {canceled && <span style={{ marginLeft: 6, textDecoration: 'line-through' }}>annulé</span>}
+                                  {dispo && <span style={{ marginLeft: 6, padding: '0 6px', borderRadius: 999, background: '#8B5CF6', color: '#FFF', fontSize: 9, fontWeight: 800, letterSpacing: '0.04em' }}>DISPO</span>}
                                 </div>
                                 {gpsUrl && (
                                   <a

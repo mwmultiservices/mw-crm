@@ -1,12 +1,14 @@
 'use client'
 import { useState } from 'react'
-import { createJob, updateJob, deleteJob, clientName, type Job, type AssignProfile } from '@/lib/queries/calendar'
+import { createJob, updateJob, deleteJob, clientName, type Job, type JobInput, type AssignProfile } from '@/lib/queries/calendar'
 import type { Lane } from './WeekCalendar'
-import { Trash2, Navigation } from 'lucide-react'
+import JobExtras from './JobExtras'
+import { Trash2, Navigation, Phone } from 'lucide-react'
 
 interface Props {
   kind: 'fenetre' | 'paysagement'
   canEdit?: boolean
+  userId?: string | null
   lanes: Lane[]
   assignProfiles: AssignProfile[]
   // création
@@ -33,7 +35,7 @@ function buildISO(date: string, time: string): string | null {
   return new Date(`${date}T${time}`).toISOString()
 }
 
-export default function JobModal({ kind, canEdit = true, lanes, assignProfiles, initialDate, initialTeam, job, onClose, onSaved }: Props) {
+export default function JobModal({ kind, canEdit = true, userId = null, lanes, assignProfiles, initialDate, initialTeam, job, onClose, onSaved }: Props) {
   const isEdit = !!job
   const ro = !canEdit // lecture seule (employés non-admin)
 
@@ -42,6 +44,8 @@ export default function JobModal({ kind, canEdit = true, lanes, assignProfiles, 
   const [service, setService] = useState(job?.service ?? '')
   const [routeName, setRouteName] = useState(job?.route_name ?? '')
   const [address, setAddress] = useState(job?.address ?? '')
+  const [clientPhone, setClientPhone] = useState(job?.client_phone ?? '')
+  const [clientEmail, setClientEmail] = useState(job?.client_email ?? '')
   const [date, setDate] = useState(job ? dateInput(job.start_at) : (initialDate ?? ''))
   const [start, setStart] = useState(job ? timeInput(job.start_at) : '08:00')
   const [end, setEnd] = useState(job ? timeInput(job.end_at) : '10:00')
@@ -59,11 +63,12 @@ export default function JobModal({ kind, canEdit = true, lanes, assignProfiles, 
     setAssigned((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]))
 
   const save = async () => {
-    if (!title.trim()) { setError(kind === 'fenetre' ? 'Nom du client / job requis.' : 'Nom du job requis.'); return }
+    // un slot dispo n'a pas encore de client — titre optionnel
+    if (!title.trim() && status !== 'dispo') { setError(kind === 'fenetre' ? 'Nom du client / job requis.' : 'Nom du job requis.'); return }
     if (!date) { setError('Date requise.'); return }
     setSaving(true); setError('')
-    const payload = {
-      title: title.trim(),
+    const payload: JobInput = {
+      title: title.trim() || (status === 'dispo' ? 'Dispo' : null),
       service: service || null,
       type,
       team,
@@ -75,6 +80,11 @@ export default function JobModal({ kind, canEdit = true, lanes, assignProfiles, 
       status,
       price: price ? Number(price) : null,
       notes: notes || null,
+    }
+    // colonnes récentes : omises si vides pour tolérer une migration pas encore appliquée
+    if (clientPhone.trim() || clientEmail.trim() || job?.client_phone != null || job?.client_email != null) {
+      payload.client_phone = clientPhone.trim() || null
+      payload.client_email = clientEmail.trim() || null
     }
     const { error: e } = isEdit ? await updateJob(job!.id, payload) : await createJob(payload)
     setSaving(false)
@@ -140,6 +150,22 @@ export default function JobModal({ kind, canEdit = true, lanes, assignProfiles, 
           </Field>
 
           <div style={{ display: 'flex', gap: 10 }}>
+            <Field label="Téléphone client" flex>
+              <div style={{ display: 'flex', gap: 6 }}>
+                <input value={clientPhone} onChange={(e) => setClientPhone(e.target.value)} style={inp} inputMode="tel" placeholder="514-555-1234" />
+                {clientPhone.trim() && (
+                  <a href={`tel:${clientPhone.trim()}`} aria-label="Appeler" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', flex: '0 0 40px', borderRadius: 8, border: '1px solid #69C9CA', background: '#69C9CA14', color: '#0E6B6E' }}>
+                    <Phone size={16} />
+                  </a>
+                )}
+              </div>
+            </Field>
+            <Field label="Courriel client" flex>
+              <input value={clientEmail} onChange={(e) => setClientEmail(e.target.value)} style={inp} type="email" autoCapitalize="none" placeholder="client@exemple.com" />
+            </Field>
+          </div>
+
+          <div style={{ display: 'flex', gap: 10 }}>
             <Field label="Date" flex><input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={inp} /></Field>
             <Field label="Équipe" flex>
               <select value={team} onChange={(e) => setTeam(e.target.value)} style={inp}>
@@ -173,20 +199,25 @@ export default function JobModal({ kind, canEdit = true, lanes, assignProfiles, 
             )}
           </Field>
 
-          {isEdit && (
-            <Field label="Statut">
-              <select value={status} onChange={(e) => setStatus(e.target.value)} style={inp}>
-                <option value="scheduled">Cédulé</option>
-                <option value="done">Complété</option>
-                <option value="canceled">Annulé</option>
-              </select>
-            </Field>
-          )}
+          <Field label="Statut">
+            <select value={status} onChange={(e) => setStatus(e.target.value)} style={{
+              ...inp,
+              ...(status === 'dispo' ? { borderColor: '#8B5CF6', background: '#F5F3FF', color: '#6D28D9', fontWeight: 600 } : null),
+            }}>
+              <option value="scheduled">Cédulé</option>
+              <option value="dispo">🟣 Slot dispo (à vendre)</option>
+              <option value="done">Complété</option>
+              <option value="canceled">Annulé</option>
+            </select>
+          </Field>
 
           <Field label="Notes"><textarea value={notes} onChange={(e) => setNotes(e.target.value)} style={{ ...inp, minHeight: 54, resize: 'vertical' }} /></Field>
 
           {error && <div style={{ color: '#991B1B', fontSize: 13 }}>{error}</div>}
         </fieldset>
+
+        {/* photos + dépenses : hors fieldset — les employés y ont accès même en lecture seule */}
+        {isEdit && <JobExtras jobId={job!.id} userId={userId} isAdmin={canEdit} />}
 
         <div style={{ display: 'flex', gap: 8, marginTop: 18, alignItems: 'center' }}>
           {ro ? (

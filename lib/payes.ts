@@ -36,6 +36,30 @@ export function addWeeks(mondayStr: string, n: number): string {
   return ymd(d)
 }
 
+// --- période de paye aux 2 semaines ---
+// Ancre des périodes : lundi 3 août 2026 (référence du client « du 3 au 16 août »).
+export const PERIOD_ANCHOR = '2026-08-03'
+
+// Lundi de DÉBUT de la période de 2 semaines contenant la semaine `mondayStr`.
+export function periodStartOf(mondayStr: string): string {
+  const ms = new Date(mondayStr + 'T00:00:00').getTime() - new Date(PERIOD_ANCHOR + 'T00:00:00').getTime()
+  const weeks = Math.round(ms / (7 * 86400000)) // round : absorbe l'heure de DST
+  const offset = ((weeks % 2) + 2) % 2
+  return addWeeks(mondayStr, -offset)
+}
+
+// « 3 au 16 août 2026 »
+export function formatPeriodLabel(periodStart: string): string {
+  const a = new Date(periodStart + 'T00:00:00')
+  const b = new Date(periodStart + 'T00:00:00')
+  b.setDate(b.getDate() + 13)
+  const end = b.toLocaleDateString('fr-CA', { day: 'numeric', month: 'long', year: 'numeric' })
+  const start = a.getMonth() === b.getMonth()
+    ? String(a.getDate())
+    : a.toLocaleDateString('fr-CA', { day: 'numeric', month: 'long' })
+  return `${start} au ${end}`
+}
+
 // Bornes ISO [lundi 00:00, lundi+7 00:00) pour filtrer created_at/updated_at.
 export function weekRangeISO(mondayStr: string): { startISO: string; endISO: string } {
   const start = new Date(mondayStr + 'T00:00:00')

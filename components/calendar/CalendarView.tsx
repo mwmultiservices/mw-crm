@@ -114,6 +114,7 @@ export default function CalendarView({ kind }: { kind: 'fenetre' | 'paysagement'
         <JobModal
           kind={kind}
           canEdit={canEdit}
+          userId={userId}
           lanes={LANES}
           assignProfiles={assignProfiles}
           initialDate={modal.date}
