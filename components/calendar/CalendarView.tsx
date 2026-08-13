@@ -28,8 +28,8 @@ export default function CalendarView({ kind }: { kind: 'fenetre' | 'paysagement'
   const [assignProfiles, setAssignProfiles] = useState<AssignProfile[]>([])
   const [loading, setLoading] = useState(true)
 
-  // modal : { mode:'create', date, team } | { mode:'edit', job }
-  const [modal, setModal] = useState<{ date?: string; team?: string; job?: Job } | null>(null)
+  // modal : { mode:'create', date, time, team } | { mode:'edit', job }
+  const [modal, setModal] = useState<{ date?: string; time?: string; team?: string; job?: Job } | null>(null)
 
   const canEdit = isManager(role)
 
@@ -73,18 +73,32 @@ export default function CalendarView({ kind }: { kind: 'fenetre' | 'paysagement'
 
   const onSaved = () => { setModal(null); loadJobs(weekStart) }
 
-  // Glisser-déposer : déplace un job vers un autre jour / une autre équipe.
-  // L'heure est conservée ; maj optimiste puis rollback si l'update échoue.
-  const moveJob = async (job: Job, dayKey: string, laneId: string) => {
+  // Glisser-déposer : déplace un job vers un autre jour / équipe / heure.
+  // La durée est conservée ; maj optimiste puis rollback si l'update échoue.
+  const moveJob = async (job: Job, dayKey: string, laneId: string, startMinutes?: number) => {
     const [y, m, d] = dayKey.split('-').map(Number)
-    const shift = (iso: string | null): string | null => {
-      if (!iso) return iso
-      const dt = new Date(iso)
-      dt.setFullYear(y, m - 1, d)
-      return dt.toISOString()
+    const oldStart = job.start_at ? new Date(job.start_at) : null
+    // durée d'origine (défaut 2 h) pour recaler la fin quand l'heure change
+    const durationMs = oldStart && job.end_at
+      ? Math.max(new Date(job.end_at).getTime() - oldStart.getTime(), 15 * 60000)
+      : 2 * 3600000
+
+    let start_at: string | null = null
+    let end_at: string | null = null
+    if (startMinutes != null) {
+      const s = new Date(y, m - 1, d, Math.floor(startMinutes / 60), startMinutes % 60, 0, 0)
+      start_at = s.toISOString()
+      end_at = new Date(s.getTime() + durationMs).toISOString()
+    } else {
+      const shift = (iso: string | null): string | null => {
+        if (!iso) return iso
+        const dt = new Date(iso)
+        dt.setFullYear(y, m - 1, d)
+        return dt.toISOString()
+      }
+      start_at = shift(job.start_at)
+      end_at = shift(job.end_at)
     }
-    const start_at = shift(job.start_at)
-    const end_at = shift(job.end_at)
     setJobs((prev) => prev.map((j) => (j.id === job.id ? { ...j, start_at, end_at, team: laneId } : j)))
     const { error } = await updateJob(job.id, { start_at, end_at, team: laneId })
     if (error) { alert(error); loadJobs(weekStart) }
@@ -118,7 +132,7 @@ export default function CalendarView({ kind }: { kind: 'fenetre' | 'paysagement'
           profileMap={profileMap}
           currentUserId={userId}
           canEdit={canEdit}
-          onAddJob={(dateISO, laneId) => setModal({ date: dateISO.slice(0, 10), team: laneId })}
+          onAddJob={(dateISO, laneId) => setModal({ date: dateISO.slice(0, 10), time: dateISO.slice(11, 16), team: laneId })}
           onJobClick={(job) => setModal({ job })}
           onMoveJob={moveJob}
         />
@@ -127,7 +141,7 @@ export default function CalendarView({ kind }: { kind: 'fenetre' | 'paysagement'
       {!loading && (
         <p style={{ fontSize: 12, color: '#9CA3AF', marginTop: 8 }}>
           {canEdit
-            ? 'Glisse une job vers un autre jour ou une autre équipe pour la déplacer.'
+            ? 'Clique un créneau libre pour créer une job. Glisse une job vers un autre jour, une autre équipe ou une autre heure (pas de 15 min).'
             : 'Lecture seule — seuls les admins peuvent céduler. Tes jobs sont surlignés.'}
         </p>
       )}
@@ -140,6 +154,7 @@ export default function CalendarView({ kind }: { kind: 'fenetre' | 'paysagement'
           lanes={LANES}
           assignProfiles={assignProfiles}
           initialDate={modal.date}
+          initialStart={modal.time}
           initialTeam={modal.team}
           job={modal.job}
           onClose={() => setModal(null)}

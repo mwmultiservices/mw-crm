@@ -16,6 +16,7 @@ interface Props {
   assignProfiles: AssignProfile[]
   // création
   initialDate?: string // YYYY-MM-DD
+  initialStart?: string // HH:MM (créneau cliqué dans la grille)
   initialTeam?: string
   // édition
   job?: Job | null
@@ -33,12 +34,18 @@ function timeInput(iso: string | null): string {
   const d = new Date(iso)
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
 }
+/** « 14:30 » + 2 h → « 16:30 » (borné à 23:59) */
+function plusHours(time: string, hours: number): string {
+  const [h, m] = time.split(':').map(Number)
+  const total = Math.min(h * 60 + m + hours * 60, 23 * 60 + 59)
+  return `${String(Math.floor(total / 60)).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`
+}
 function buildISO(date: string, time: string): string | null {
   if (!date || !time) return null
   return new Date(`${date}T${time}`).toISOString()
 }
 
-export default function JobModal({ kind, canEdit = true, userId = null, lanes, assignProfiles, initialDate, initialTeam, job, onClose, onSaved }: Props) {
+export default function JobModal({ kind, canEdit = true, userId = null, lanes, assignProfiles, initialDate, initialStart, initialTeam, job, onClose, onSaved }: Props) {
   const isEdit = !!job
   const ro = !canEdit // lecture seule (employés non-admin)
 
@@ -51,8 +58,8 @@ export default function JobModal({ kind, canEdit = true, userId = null, lanes, a
   const [clientPhone, setClientPhone] = useState(job?.client_phone ?? '')
   const [clientEmail, setClientEmail] = useState(job?.client_email ?? '')
   const [date, setDate] = useState(job ? dateInput(job.start_at) : (initialDate ?? ''))
-  const [start, setStart] = useState(job ? timeInput(job.start_at) : '08:00')
-  const [end, setEnd] = useState(job ? timeInput(job.end_at) : '10:00')
+  const [start, setStart] = useState(job ? timeInput(job.start_at) : (initialStart || '08:00'))
+  const [end, setEnd] = useState(job ? timeInput(job.end_at) : plusHours(initialStart || '08:00', 2))
   const [team, setTeam] = useState(job?.team ?? initialTeam ?? lanes[0]?.id ?? 'equipe1')
   const [assigned, setAssigned] = useState<string[]>(job?.assigned_ids ?? [])
   const [price, setPrice] = useState(job?.price != null ? String(job.price) : '')
