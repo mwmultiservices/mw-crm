@@ -4,7 +4,7 @@ import Link from 'next/link'
 import { createJob, updateJob, deleteJob, clientName, type Job, type JobInput, type AssignProfile } from '@/lib/queries/calendar'
 import { searchClients, fullAddress, type Client } from '@/lib/queries/clients'
 import { GAZON_ROUTES, findRoute, routeLabel } from '@/lib/gazon-routes'
-import type { Lane } from './WeekCalendar'
+import type { Lane, ProfileMini } from './WeekCalendar'
 import JobExtras from './JobExtras'
 import { Trash2, Navigation, Phone, Play } from 'lucide-react'
 
@@ -14,6 +14,8 @@ interface Props {
   userId?: string | null
   lanes: Lane[]
   assignProfiles: AssignProfile[]
+  // tous les profils (id → nom/couleur) : sert à nommer les coéquipiers en lecture seule
+  profileMap?: Record<string, ProfileMini>
   // création
   initialDate?: string // YYYY-MM-DD
   initialStart?: string // HH:MM (créneau cliqué dans la grille)
@@ -34,6 +36,9 @@ function timeInput(iso: string | null): string {
   const d = new Date(iso)
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
 }
+const TYPE_OPTIONS = [{ id: 'gazon', l: '🌿 Gazon (route)' }, { id: 'projet', l: '🔨 Projet' }]
+const TYPE_LABELS: Record<string, string> = Object.fromEntries(TYPE_OPTIONS.map((t) => [t.id, t.l]))
+
 /** « 14:30 » + 2 h → « 16:30 » (borné à 23:59) */
 function plusHours(time: string, hours: number): string {
   const [h, m] = time.split(':').map(Number)
@@ -45,7 +50,7 @@ function buildISO(date: string, time: string): string | null {
   return new Date(`${date}T${time}`).toISOString()
 }
 
-export default function JobModal({ kind, canEdit = true, userId = null, lanes, assignProfiles, initialDate, initialStart, initialTeam, job, onClose, onSaved }: Props) {
+export default function JobModal({ kind, canEdit = true, userId = null, lanes, assignProfiles, profileMap = {}, initialDate, initialStart, initialTeam, job, onClose, onSaved }: Props) {
   const isEdit = !!job
   const ro = !canEdit // lecture seule (employés non-admin)
 
@@ -172,15 +177,23 @@ export default function JobModal({ kind, canEdit = true, userId = null, lanes, a
         <fieldset disabled={ro} style={{ display: 'flex', flexDirection: 'column', gap: 10, border: 'none', padding: 0, margin: 0, minInlineSize: 'auto' }}>
           {kind === 'paysagement' && (
             <Field label="Type">
-              <div style={{ display: 'flex', gap: 8 }}>
-                {[{ id: 'gazon', l: '🌿 Gazon (route)' }, { id: 'projet', l: '🔨 Projet' }].map((t) => (
-                  <button key={t.id} onClick={() => setType(t.id)} style={{
-                    flex: 1, padding: '8px 0', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer',
-                    border: type === t.id ? '2px solid #697035' : '1px solid #D1D5DB',
-                    background: type === t.id ? '#6970350F' : '#FFF', color: '#374151',
-                  }}>{t.l}</button>
-                ))}
-              </div>
+              {/* en lecture seule : seulement le type réel du job, pas le choix des deux */}
+              {ro ? (
+                <div style={{
+                  display: 'inline-block', padding: '6px 12px', borderRadius: 8, fontSize: 13, fontWeight: 700,
+                  border: '2px solid #697035', background: '#6970350F', color: '#374151',
+                }}>{TYPE_LABELS[type] ?? type}</div>
+              ) : (
+                <div style={{ display: 'flex', gap: 8 }}>
+                  {TYPE_OPTIONS.map((t) => (
+                    <button key={t.id} onClick={() => setType(t.id)} style={{
+                      flex: 1, padding: '8px 0', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer',
+                      border: type === t.id ? '2px solid #697035' : '1px solid #D1D5DB',
+                      background: type === t.id ? '#6970350F' : '#FFF', color: '#374151',
+                    }}>{t.l}</button>
+                  ))}
+                </div>
+              )}
             </Field>
           )}
 
@@ -273,11 +286,14 @@ export default function JobModal({ kind, canEdit = true, userId = null, lanes, a
 
           <div style={{ display: 'flex', gap: 10 }}>
             <Field label="Date" flex><input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={inp} /></Field>
-            <Field label="Équipe" flex>
-              <select value={team} onChange={(e) => setTeam(e.target.value)} style={inp}>
-                {lanes.map((l) => <option key={l.id} value={l.id}>{l.label}</option>)}
-              </select>
-            </Field>
+            {/* l'employé ne voit pas la répartition équipe 1 / équipe 2 */}
+            {!ro && (
+              <Field label="Équipe" flex>
+                <select value={team} onChange={(e) => setTeam(e.target.value)} style={inp}>
+                  {lanes.map((l) => <option key={l.id} value={l.id}>{l.label}</option>)}
+                </select>
+              </Field>
+            )}
           </div>
 
           <div style={{ display: 'flex', gap: 10 }}>
@@ -287,7 +303,25 @@ export default function JobModal({ kind, canEdit = true, userId = null, lanes, a
           </div>
 
           <Field label={kind === 'fenetre' ? 'Techniciens assignés' : 'Équipe assignée'}>
-            {assignProfiles.length === 0 ? (
+            {ro ? (
+              /* lecture seule : seulement les coéquipiers assignés, en couleur */
+              assigned.length === 0 ? (
+                <div style={{ fontSize: 12, color: '#9CA3AF' }}>Personne d&apos;autre sur cette job.</div>
+              ) : (
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                  {assigned.map((id) => {
+                    const p = profileMap[id] ?? assignProfiles.find((a) => a.id === id)
+                    const color = p?.color ?? '#69C9CA'
+                    return (
+                      <span key={id} style={{
+                        padding: '5px 10px', borderRadius: 999, fontSize: 12, fontWeight: 700,
+                        border: `2px solid ${color}`, background: color + '14', color: '#374151',
+                      }}>{p?.full_name ?? '—'}{id === userId ? ' (moi)' : ''}</span>
+                    )
+                  })}
+                </div>
+              )
+            ) : assignProfiles.length === 0 ? (
               <div style={{ fontSize: 12, color: '#9CA3AF' }}>Aucun employé disponible.</div>
             ) : (
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>

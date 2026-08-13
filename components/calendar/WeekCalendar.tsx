@@ -15,6 +15,8 @@ interface Props {
   profileMap: Record<string, ProfileMini>
   currentUserId?: string | null
   canEdit: boolean
+  // false = une seule colonne par jour (vue employé : ses jobs, sans notion d'équipe)
+  groupByTeam?: boolean
   // dateISO = `YYYY-MM-DDTHH:MM` (heure du créneau cliqué)
   onAddJob: (dateISO: string, laneId: string) => void
   onJobClick: (job: Job) => void
@@ -119,7 +121,7 @@ function minutesFromEvent(e: React.MouseEvent | React.DragEvent, el: HTMLElement
 }
 
 export default function WeekCalendar({
-  weekStart, lanes, jobs, profileMap, currentUserId, canEdit, onAddJob, onJobClick, onMoveJob,
+  weekStart, lanes, jobs, profileMap, currentUserId, canEdit, groupByTeam = true, onAddJob, onJobClick, onMoveJob,
 }: Props) {
   const now = new Date()
   const todayKey = ymd(now)
@@ -167,17 +169,21 @@ export default function WeekCalendar({
           )
         })}
 
-        {/* ── ligne 2 : équipes ── */}
-        <div style={{ position: 'sticky', left: 0, zIndex: 3, background: '#FFF' }} />
-        {days.map((day) => lanes.map((lane) => (
-          <div key={`l-${ymd(day)}-${lane.id}`} style={{
-            padding: '4px 0', textAlign: 'center', fontSize: 10, fontWeight: 700, letterSpacing: '0.04em',
-            textTransform: 'uppercase', color: '#6B7280', borderTop: `3px solid ${lane.color}`,
-            background: lane.color + '10', marginBottom: 4,
-          }}>
-            {lane.label.replace('Équipe ', 'Éq. ')}
-          </div>
-        )))}
+        {/* ── ligne 2 : équipes (masquée en vue employé, une seule colonne) ── */}
+        {lanes.length > 1 && (
+          <>
+            <div style={{ position: 'sticky', left: 0, zIndex: 3, background: '#FFF' }} />
+            {days.map((day) => lanes.map((lane) => (
+              <div key={`l-${ymd(day)}-${lane.id}`} style={{
+                padding: '4px 0', textAlign: 'center', fontSize: 10, fontWeight: 700, letterSpacing: '0.04em',
+                textTransform: 'uppercase', color: '#6B7280', borderTop: `3px solid ${lane.color}`,
+                background: lane.color + '10', marginBottom: 4,
+              }}>
+                {lane.label.replace('Équipe ', 'Éq. ')}
+              </div>
+            )))}
+          </>
+        )}
 
         {/* ── ligne 3 : gouttière des heures + colonnes ── */}
         <div style={{ position: 'sticky', left: 0, zIndex: 3, background: '#FFF', height: GRID_H }}>
@@ -195,7 +201,8 @@ export default function WeekCalendar({
           const key = ymd(day)
           const isToday = key === todayKey
           return lanes.map((lane, li) => {
-            const laneJobs = jobs.filter((j) => dayKeyOf(j.start_at) === key && (j.team ?? 'equipe1') === lane.id)
+            const laneJobs = jobs.filter((j) =>
+              dayKeyOf(j.start_at) === key && (!groupByTeam || (j.team ?? 'equipe1') === lane.id))
             const placed = layout(laneJobs)
             const over = dragOver?.day === key && dragOver?.lane === lane.id
             return (

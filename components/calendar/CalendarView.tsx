@@ -12,6 +12,8 @@ const LANES: Lane[] = [
   { id: 'equipe1', label: 'Équipe 1', color: '#69C9CA' },
   { id: 'equipe2', label: 'Équipe 2', color: '#697035' },
 ]
+// vue employé : une seule colonne par jour, ses jobs seulement (pas de notion d'équipe 1/2)
+const SOLO_LANE: Lane[] = [{ id: 'mine', label: 'Mon horaire', color: '#69C9CA' }]
 
 const CONFIG = {
   fenetre: { title: 'Calendrier — Fenêtres', types: ['fenetre'], assignRoles: ['tech'] },
@@ -69,7 +71,12 @@ export default function CalendarView({ kind }: { kind: 'fenetre' | 'paysagement'
     return () => { supabase.removeChannel(channel) }
   }, [kind, weekStart, loadJobs])
 
-  const total = useMemo(() => jobs.length, [jobs])
+  // un employé ne voit que SES jobs (aucune vue d'ensemble des équipes)
+  const visibleJobs = useMemo(
+    () => (canEdit ? jobs : jobs.filter((j) => !!userId && j.assigned_ids?.includes(userId))),
+    [jobs, canEdit, userId],
+  )
+  const total = visibleJobs.length
 
   const onSaved = () => { setModal(null); loadJobs(weekStart) }
 
@@ -107,7 +114,9 @@ export default function CalendarView({ kind }: { kind: 'fenetre' | 'paysagement'
   return (
     <div style={{ fontFamily: 'Inter, sans-serif', padding: '12px 16px 84px' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 16 }}>
-        <h1 style={{ fontSize: 22, fontWeight: 700, color: '#111827', margin: 0 }}>{cfg.title}</h1>
+        <h1 style={{ fontSize: 22, fontWeight: 700, color: '#111827', margin: 0 }}>
+          {canEdit ? cfg.title : `Mon horaire — ${kind === 'fenetre' ? 'Fenêtres' : 'Paysagement'}`}
+        </h1>
         <span style={{ color: '#6B7280', fontSize: 13 }}>{total} job{total > 1 ? 's' : ''}</span>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginLeft: 'auto' }}>
           <button onClick={() => setWeekStart(addWeeks(weekStart, -1))} style={navBtn} aria-label="Semaine précédente"><ChevronLeft size={16} /></button>
@@ -127,11 +136,12 @@ export default function CalendarView({ kind }: { kind: 'fenetre' | 'paysagement'
       ) : (
         <WeekCalendar
           weekStart={weekStart}
-          lanes={LANES}
-          jobs={jobs}
+          lanes={canEdit ? LANES : SOLO_LANE}
+          jobs={visibleJobs}
           profileMap={profileMap}
           currentUserId={userId}
           canEdit={canEdit}
+          groupByTeam={canEdit}
           onAddJob={(dateISO, laneId) => setModal({ date: dateISO.slice(0, 10), time: dateISO.slice(11, 16), team: laneId })}
           onJobClick={(job) => setModal({ job })}
           onMoveJob={moveJob}
@@ -142,7 +152,7 @@ export default function CalendarView({ kind }: { kind: 'fenetre' | 'paysagement'
         <p style={{ fontSize: 12, color: '#9CA3AF', marginTop: 8 }}>
           {canEdit
             ? 'Clique un créneau libre pour créer une job. Glisse une job vers un autre jour, une autre équipe ou une autre heure (pas de 15 min).'
-            : 'Lecture seule — seuls les admins peuvent céduler. Tes jobs sont surlignés.'}
+            : 'Ton horaire de la semaine. Touche une job pour voir les détails (adresse, GPS, coéquipiers, photos, dépenses).'}
         </p>
       )}
 
@@ -153,6 +163,7 @@ export default function CalendarView({ kind }: { kind: 'fenetre' | 'paysagement'
           userId={userId}
           lanes={LANES}
           assignProfiles={assignProfiles}
+          profileMap={profileMap}
           initialDate={modal.date}
           initialStart={modal.time}
           initialTeam={modal.team}
