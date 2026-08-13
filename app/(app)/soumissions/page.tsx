@@ -179,6 +179,11 @@ export default function SoumissionsPage() {
 
 // ----------------------------------------------------------------------------
 // Barre de connexion QuickBooks (admin) — squelette OAuth2.
+// Contact support affiché dans la barre QuickBooks (compliance Intuit : un
+// moyen visible de nous joindre depuis l'app en cas de problème d'intégration).
+const QB_SUPPORT_EMAIL = 'william.yelle@mwmultiservices.ca'
+const QB_SUPPORT_HREF = `mailto:${QB_SUPPORT_EMAIL}?subject=${encodeURIComponent('Support QuickBooks — MW CRM')}`
+
 function QuickBooksBar() {
   const [state, setState] = useState<{ configured: boolean; connected: boolean; env: string } | null>(null)
   const [flash, setFlash] = useState<string | null>(null)
@@ -220,6 +225,9 @@ function QuickBooksBar() {
         QuickBooks
         {state.connected ? <span style={{ color: '#047857' }}> · connecté ({state.env})</span> : ' · non connecté'}
       </span>
+      <a href={QB_SUPPORT_HREF} style={{ fontSize: 12, color: '#6B7280', textDecoration: 'underline' }}>
+        Besoin d&rsquo;aide ?
+      </a>
       <span style={{ flex: 1 }} />
       {flash && <span style={{ fontSize: 12, color: '#6B7280' }}>{flash}</span>}
       {!state.configured ? (

@@ -81,6 +81,10 @@ async function qbFetch(conn: Conn, path: string, init?: RequestInit, _retried = 
     },
   })
 
+  // intuit_tid identifie la requête côté systèmes Intuit — indispensable pour
+  // qu'un support QuickBooks retrouve rapidement un incident précis.
+  const tid = res.headers.get('intuit_tid')
+
   if (res.status === 401 && !_retried) {
     try {
       const t = await refreshTokens(conn.refreshToken)
@@ -96,11 +100,12 @@ async function qbFetch(conn: Conn, path: string, init?: RequestInit, _retried = 
 
   const text = await res.text()
   if (!res.ok) {
+    console.error(`[QuickBooks] ${res.status} sur ${path} — intuit_tid=${tid ?? 'absent'}:`, text)
     if (res.status === 401) {
       await clearConnection()
-      throw new QuickBooksAuthError(`QuickBooks 401 après retry — reconnexion requise: ${text}`)
+      throw new QuickBooksAuthError(`QuickBooks 401 après retry (intuit_tid=${tid ?? 'absent'}) — reconnexion requise: ${text}`)
     }
-    throw new Error(`QuickBooks ${res.status}: ${text}`)
+    throw new Error(`QuickBooks ${res.status} (intuit_tid=${tid ?? 'absent'}): ${text}`)
   }
   return text ? JSON.parse(text) : {}
 }
