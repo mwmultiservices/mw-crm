@@ -115,15 +115,17 @@ export function terrainDirectionsUrl(t: Pick<GazonTerrain, 'address'>): string |
   return `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(dest)}`
 }
 
-// Itinéraire multi-arrêts d'un secteur, dans l'ordre de passage.
-// L'URL Google Maps accepte ~9 waypoints + 1 destination → on prend les
-// 10 premiers arrêts de la liste passée (filtrer AVANT : restants à faire).
+// Shop MW Multiservices — point d'ARRIVÉE de tous les itinéraires de gazon.
+export const SHOP_ADDRESS = '6350 Ch. de la Savane, Saint-Hubert, QC J3Y 0Z9'
+
+// Itinéraire multi-arrêts d'un secteur, dans l'ordre de passage, qui se
+// TERMINE toujours au shop. L'URL Google Maps accepte ~9 waypoints + 1
+// destination : la destination est le shop, donc au plus 9 terrains
+// (filtrer AVANT : restants à faire).
 export function gazonRouteUrl(terrains: Pick<GazonTerrain, 'address'>[]): string | null {
-  const addrs = terrains.map((t) => (t.address ?? '').trim()).filter(Boolean).slice(0, 10)
-  if (!addrs.length) return null
-  const dest = addrs[addrs.length - 1]
-  const waypoints = addrs.slice(0, -1)
-  let url = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(dest)}&travelmode=driving`
-  if (waypoints.length) url += `&waypoints=${waypoints.map((a) => encodeURIComponent(a)).join('%7C')}`
+  const stops = terrains.map((t) => (t.address ?? '').trim()).filter(Boolean).slice(0, 9)
+  if (!stops.length) return null
+  let url = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(SHOP_ADDRESS)}&travelmode=driving`
+  url += `&waypoints=${stops.map((a) => encodeURIComponent(a)).join('%7C')}`
   return url
 }

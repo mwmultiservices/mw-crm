@@ -8,7 +8,7 @@ import { findRoute, routeOfSecteur, groupKeyOfSecteur } from '@/lib/gazon-routes
 import { mondayOf, addWeeks, formatWeekLabel } from '@/lib/payes'
 import {
   getTerrains, getPassagesWeek, getPassagesRange, setPassage, clearPassage,
-  createTerrain, updateTerrain, deleteTerrain, terrainDirectionsUrl, gazonRouteUrl,
+  createTerrain, updateTerrain, deleteTerrain, terrainDirectionsUrl, gazonRouteUrl, SHOP_ADDRESS,
   type GazonTerrain, type GazonPassage, type GazonTerrainInput,
 } from '@/lib/queries/gazon'
 import { uploadPhoto, photoUrl, deletePhoto } from '@/lib/storage'
@@ -173,7 +173,7 @@ function GazonRun() {
         )}
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
           {view === 'run' && routeUrl && (
-            <a href={routeUrl} target="_blank" rel="noopener noreferrer" style={{ ...addBtn, textDecoration: 'none', background: '#697035', color: '#FFF' }}>
+            <a href={routeUrl} target="_blank" rel="noopener noreferrer" title={`Retour au shop à la fin (${SHOP_ADDRESS})`} style={{ ...addBtn, textDecoration: 'none', background: '#697035', color: '#FFF' }}>
               <Route size={15} />Itinéraire restant
             </a>
           )}
