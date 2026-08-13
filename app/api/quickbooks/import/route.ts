@@ -1,4 +1,5 @@
 import { importFromQuickBooks } from '@/lib/quickbooks-sync'
+import { QuickBooksAuthError } from '@/lib/quickbooks'
 
 // POST /api/quickbooks/import — importe QB → CRM :
 //   Customers → clients · Estimates → quotes (devis) · Invoices → quotes (factures)
@@ -10,6 +11,12 @@ export async function POST() {
     return Response.json(result, { status: result.ok ? 200 : 400 })
   } catch (e) {
     console.error('[QuickBooks] import:', e)
+    if (e instanceof QuickBooksAuthError) {
+      return Response.json(
+        { ok: false, error: 'Connexion QuickBooks expirée — reconnecte-toi via la barre QuickBooks ci-dessus.' },
+        { status: 401 }
+      )
+    }
     return Response.json(
       { ok: false, error: e instanceof Error ? e.message : 'Erreur QuickBooks' },
       { status: 500 }

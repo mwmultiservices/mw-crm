@@ -11,7 +11,7 @@ export async function GET(request: Request) {
   }
 
   const state = randomUUID()
-  const res = new Response(null, { status: 302, headers: { Location: authorizeUrl(state) } })
+  const res = new Response(null, { status: 302, headers: { Location: await authorizeUrl(state) } })
   res.headers.append('Set-Cookie', `qb_state=${state}; Path=/; HttpOnly; SameSite=Lax; Max-Age=600`)
   return res
 }

@@ -1,4 +1,5 @@
 import { sendQuoteToClient } from '@/lib/quickbooks-sync'
+import { QuickBooksAuthError } from '@/lib/quickbooks'
 
 // POST /api/quickbooks/send — envoie le devis/la facture PAR COURRIEL au client
 // via QuickBooks (pousse d'abord dans QB si nécessaire). Anti double-envoi.
@@ -17,6 +18,12 @@ export async function POST(request: Request) {
     return Response.json(result, { status: result.ok ? 200 : 400 })
   } catch (e) {
     console.error('[QuickBooks] send:', e)
+    if (e instanceof QuickBooksAuthError) {
+      return Response.json(
+        { ok: false, error: 'Connexion QuickBooks expirée — reconnecte-toi via la barre QuickBooks ci-dessus.' },
+        { status: 401 }
+      )
+    }
     return Response.json(
       { ok: false, error: e instanceof Error ? e.message : 'Erreur QuickBooks' },
       { status: 500 }

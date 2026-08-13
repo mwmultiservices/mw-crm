@@ -8,18 +8,25 @@
 // Pas de retour de paiement (décision : envoi unidirectionnel pour l'instant).
 // ============================================================
 import { supabaseAdmin } from '@/lib/supabaseAdmin'
-import { refreshTokens, QB_API_BASE } from '@/lib/quickbooks'
+import { refreshTokens, QB_API_BASE, QuickBooksAuthError } from '@/lib/quickbooks'
 
 const MINOR = '70' // minorversion de l'API comptable QBO
 
-interface Conn { accessToken: string; realmId: string }
+interface Conn { accessToken: string; refreshToken: string; realmId: string }
 
 const CATEGORY_LABELS: Record<string, string> = {
   fenetre: 'Fenêtres', paysagement: 'Paysagement', projet: 'Projet',
 }
 
+async function clearConnection(): Promise<void> {
+  await supabaseAdmin.from('quickbooks_connection').delete().eq('id', 1)
+}
+
 // Lit la connexion QB (singleton id=1), rafraîchit le token si expiré, persiste.
-// Retourne null si QuickBooks n'est pas connecté.
+// Retourne null si QuickBooks n'est pas connecté. Si Intuit signale que le
+// refresh token est mort (QuickBooksAuthError), efface la connexion locale
+// pour que l'UI repropose « Connecter QuickBooks » plutôt que de retenter
+// indéfiniment avec un token mort.
 export async function getValidConnection(): Promise<Conn | null> {
   const { data } = await supabaseAdmin
     .from('quickbooks_connection')
@@ -31,20 +38,38 @@ export async function getValidConnection(): Promise<Conn | null> {
   const exp = data.token_expires_at ? new Date(data.token_expires_at).getTime() : 0
   // token encore valide (marge de 60 s) → on le réutilise
   if (data.access_token && exp > Date.now() + 60_000) {
-    return { accessToken: data.access_token, realmId: data.realm_id }
+    return { accessToken: data.access_token, refreshToken: data.refresh_token, realmId: data.realm_id }
   }
   // sinon on rafraîchit (QBO fait tourner le refresh_token) et on persiste
-  const t = await refreshTokens(data.refresh_token)
+  try {
+    const t = await refreshTokens(data.refresh_token)
+    const expiresAt = new Date(Date.now() + t.expires_in * 1000).toISOString()
+    await supabaseAdmin
+      .from('quickbooks_connection')
+      .update({ access_token: t.access_token, refresh_token: t.refresh_token, token_expires_at: expiresAt })
+      .eq('id', 1)
+    return { accessToken: t.access_token, refreshToken: t.refresh_token, realmId: data.realm_id }
+  } catch (e) {
+    if (e instanceof QuickBooksAuthError) await clearConnection()
+    throw e
+  }
+}
+
+// Persiste un nouveau couple de tokens sur la connexion active.
+async function persistTokens(t: { access_token: string; refresh_token: string; expires_in: number }): Promise<void> {
   const expiresAt = new Date(Date.now() + t.expires_in * 1000).toISOString()
   await supabaseAdmin
     .from('quickbooks_connection')
     .update({ access_token: t.access_token, refresh_token: t.refresh_token, token_expires_at: expiresAt })
     .eq('id', 1)
-  return { accessToken: t.access_token, realmId: data.realm_id }
 }
 
-// Appel générique à l'API comptable QBO. Throw avec le corps en cas d'erreur.
-async function qbFetch(conn: Conn, path: string, init?: RequestInit): Promise<any> {
+// Appel générique à l'API comptable QBO. Sur un 401 (access token expiré plus
+// tôt que prévu — horloge, révocation manuelle), rafraîchit une fois via le
+// refresh token puis retente (jamais de 2e retry — `_retried` coupe la boucle).
+// Si le refresh échoue (refresh token mort) ou que le 401 persiste après
+// retry, efface la connexion et lève QuickBooksAuthError — reconnexion requise.
+async function qbFetch(conn: Conn, path: string, init?: RequestInit, _retried = false): Promise<any> {
   const sep = path.includes('?') ? '&' : '?'
   const res = await fetch(`${QB_API_BASE}/v3/company/${conn.realmId}${path}${sep}minorversion=${MINOR}`, {
     ...init,
@@ -55,8 +80,28 @@ async function qbFetch(conn: Conn, path: string, init?: RequestInit): Promise<an
       ...(init?.headers ?? {}),
     },
   })
+
+  if (res.status === 401 && !_retried) {
+    try {
+      const t = await refreshTokens(conn.refreshToken)
+      conn.accessToken = t.access_token
+      conn.refreshToken = t.refresh_token
+      await persistTokens(t)
+    } catch (e) {
+      if (e instanceof QuickBooksAuthError) await clearConnection()
+      throw e
+    }
+    return qbFetch(conn, path, init, true)
+  }
+
   const text = await res.text()
-  if (!res.ok) throw new Error(`QuickBooks ${res.status}: ${text}`)
+  if (!res.ok) {
+    if (res.status === 401) {
+      await clearConnection()
+      throw new QuickBooksAuthError(`QuickBooks 401 après retry — reconnexion requise: ${text}`)
+    }
+    throw new Error(`QuickBooks ${res.status}: ${text}`)
+  }
   return text ? JSON.parse(text) : {}
 }
 
