@@ -165,6 +165,15 @@ export async function deleteJobExpense(id: string): Promise<{ error: string | nu
   return { error: error?.message ?? null }
 }
 
+// Toute l'équipe (menu « payé par » d'une dépense de job).
+export async function getTeamProfiles(): Promise<AssignProfile[]> {
+  const { data } = await supabase
+    .from('profiles')
+    .select('id, full_name, color, role')
+    .order('full_name')
+  return (data as AssignProfile[]) ?? []
+}
+
 // Employés assignables à un job, selon les rôles voulus (techs / terrain).
 export async function getAssignableProfiles(roles: string[]): Promise<AssignProfile[]> {
   const { data } = await supabase

@@ -23,6 +23,11 @@ const SEASON_START = '2026-05-04'
 const GREEN = '#697035'
 const ORANGE = '#B45309'
 
+const ymdLocal = (d: Date) =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+const dayLabel = (iso: string) =>
+  new Date(iso).toLocaleDateString('fr-CA', { weekday: 'long' })
+
 // useSearchParams() doit vivre sous une frontière <Suspense> (prerendering Next).
 export default function GazonPage() {
   return (
@@ -40,6 +45,7 @@ function GazonRun() {
   const [weekOf, setWeekOf] = useState(mondayOf())
   const [terrains, setTerrains] = useState<GazonTerrain[]>([])
   const [passages, setPassages] = useState<Map<string, GazonPassage>>(new Map())
+  const [prevPassages, setPrevPassages] = useState<Map<string, GazonPassage>>(new Map()) // semaine précédente
   const [migrationError, setMigrationError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [view, setView] = useState<'run' | 'datasheet'>('run')
@@ -55,8 +61,10 @@ function GazonRun() {
   }, [])
 
   const loadPassages = useCallback(async (w: string) => {
-    const list = await getPassagesWeek(w)
+    // la semaine précédente sert à remonter les terrains manqués en haut de la run
+    const [list, prev] = await Promise.all([getPassagesWeek(w), getPassagesWeek(addWeeks(w, -1))])
     setPassages(new Map(list.map((p) => [p.terrain_id, p])))
+    setPrevPassages(new Map(prev.map((p) => [p.terrain_id, p])))
   }, [])
 
   useEffect(() => {
@@ -118,11 +126,35 @@ function GazonRun() {
   const aFaire = visible.filter((t) => !t.a_eviter)
   const faits = aFaire.filter((t) => passages.get(t.id)?.status === 'fait').length
 
-  // itinéraire du secteur : les terrains restants (pas faits, pas à éviter), dans l'ordre
+  // « À reprendre » : remonté EN HAUT de la run du lendemain — terrains cochés
+  // À ÉVITER un jour précédent de la semaine, ou manqués la semaine passée.
+  const retakes = useMemo(() => {
+    const today = ymdLocal(new Date())
+    const prevWorked = prevPassages.size > 0 // semaine passée réellement travaillée
+    const out: { t: GazonTerrain; reason: string }[] = []
+    for (const t of visible) {
+      if (t.a_eviter) continue // « à ne pas faire » permanent
+      const p = passages.get(t.id)
+      if (p) {
+        if (p.status === 'evite' && p.done_at && ymdLocal(new Date(p.done_at)) < today) {
+          out.push({ t, reason: `Évité ${dayLabel(p.done_at)}` })
+        }
+        continue // fait, ou évité aujourd'hui → reste à sa place
+      }
+      if (prevWorked && prevPassages.get(t.id)?.status !== 'fait') {
+        out.push({ t, reason: 'Manqué la semaine passée' })
+      }
+    }
+    return out
+  }, [visible, passages, prevPassages])
+
+  const retakeIds = useMemo(() => new Set(retakes.map((r) => r.t.id)), [retakes])
+
+  // itinéraire : les reprises d'abord, puis les terrains restants, dans l'ordre
   const routeUrl = useMemo(() => {
-    const rest = visible.filter((t) => !t.a_eviter && !passages.get(t.id))
-    return gazonRouteUrl(rest)
-  }, [visible, passages])
+    const rest = visible.filter((t) => !t.a_eviter && !passages.get(t.id) && !retakeIds.has(t.id))
+    return gazonRouteUrl([...retakes.map((r) => r.t), ...rest])
+  }, [visible, passages, retakes, retakeIds])
 
   const toggle = async (t: GazonTerrain, status: 'fait' | 'evite') => {
     const current = passages.get(t.id)
@@ -203,9 +235,25 @@ function GazonRun() {
         <Datasheet terrains={terrains.filter((t) => t.active)} weekOf={weekOf} />
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          {/* reprises en tête de run */}
+          {retakes.length > 0 && (
+            <div>
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, margin: '4px 0 8px' }}>
+                <h2 style={{ fontSize: 13, fontWeight: 800, color: ORANGE, textTransform: 'uppercase', letterSpacing: '0.05em', margin: 0 }}>🔁 À reprendre</h2>
+                <span style={{ fontSize: 11, color: '#9CA3AF', fontWeight: 600 }}>{retakes.length}</span>
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {retakes.map(({ t, reason }) => (
+                  <TerrainCard key={t.id} t={t} passage={passages.get(t.id)} reason={reason} onToggle={toggle} onOpen={() => setModal({ terrain: t })} />
+                ))}
+              </div>
+            </div>
+          )}
+
           {visibleSecteurs.map((s) => {
             const list = visible.filter((t) => t.secteur === s)
-            if (!list.length) return null
+            const cards = list.filter((t) => !retakeIds.has(t.id)) // les reprises sont déjà en haut
+            if (!cards.length) return null
             const done = list.filter((t) => !t.a_eviter && passages.get(t.id)?.status === 'fait').length
             const total = list.filter((t) => !t.a_eviter).length
             return (
@@ -215,7 +263,7 @@ function GazonRun() {
                   <span style={{ fontSize: 11, color: '#9CA3AF', fontWeight: 600 }}>{done}/{total}</span>
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  {list.map((t) => (
+                  {cards.map((t) => (
                     <TerrainCard key={t.id} t={t} passage={passages.get(t.id)} onToggle={toggle} onOpen={() => setModal({ terrain: t })} />
                   ))}
                 </div>
@@ -246,9 +294,10 @@ function GazonRun() {
 // ============================================================
 // Carte terrain — FAIT / À ÉVITER + GPS + tél + notes
 // ============================================================
-function TerrainCard({ t, passage, onToggle, onOpen }: {
+function TerrainCard({ t, passage, reason, onToggle, onOpen }: {
   t: GazonTerrain
   passage: GazonPassage | undefined
+  reason?: string // pourquoi ce terrain est remonté en tête de run
   onToggle: (t: GazonTerrain, s: 'fait' | 'evite') => void
   onOpen: () => void
 }) {
@@ -264,6 +313,7 @@ function TerrainCard({ t, passage, onToggle, onOpen }: {
         <div role="button" tabIndex={0} onClick={onOpen} style={{ flex: 1, minWidth: 0, cursor: 'pointer' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
             <span style={{ fontSize: 14, fontWeight: 700, color: '#111827' }}>{t.name}</span>
+            {reason && <Badge color={ORANGE}>🔁 {reason}</Badge>}
             {t.a_eviter && <Badge color="#DC2626">À NE PAS FAIRE</Badge>}
             {t.frequency && <Badge color="#6B7280">{t.frequency}</Badge>}
             {t.superficie_pi2 != null && <Badge color="#0E6B6E">{t.superficie_pi2.toLocaleString('fr-CA')} pi²</Badge>}

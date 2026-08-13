@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { supabase } from '@/lib/supabase'
 import { isManager } from '@/lib/roles'
 import { mondayOf, addWeeks, formatWeekLabel } from '@/lib/payes'
-import { getJobsWeek, getAssignableProfiles, type Job, type AssignProfile } from '@/lib/queries/calendar'
+import { getJobsWeek, getAssignableProfiles, updateJob, type Job, type AssignProfile } from '@/lib/queries/calendar'
 import WeekCalendar, { type Lane, type ProfileMini } from './WeekCalendar'
 import JobModal from './JobModal'
 import { ChevronLeft, ChevronRight, Plus } from 'lucide-react'
@@ -73,6 +73,23 @@ export default function CalendarView({ kind }: { kind: 'fenetre' | 'paysagement'
 
   const onSaved = () => { setModal(null); loadJobs(weekStart) }
 
+  // Glisser-déposer : déplace un job vers un autre jour / une autre équipe.
+  // L'heure est conservée ; maj optimiste puis rollback si l'update échoue.
+  const moveJob = async (job: Job, dayKey: string, laneId: string) => {
+    const [y, m, d] = dayKey.split('-').map(Number)
+    const shift = (iso: string | null): string | null => {
+      if (!iso) return iso
+      const dt = new Date(iso)
+      dt.setFullYear(y, m - 1, d)
+      return dt.toISOString()
+    }
+    const start_at = shift(job.start_at)
+    const end_at = shift(job.end_at)
+    setJobs((prev) => prev.map((j) => (j.id === job.id ? { ...j, start_at, end_at, team: laneId } : j)))
+    const { error } = await updateJob(job.id, { start_at, end_at, team: laneId })
+    if (error) { alert(error); loadJobs(weekStart) }
+  }
+
   return (
     <div style={{ fontFamily: 'Inter, sans-serif', padding: '12px 16px 84px' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 16 }}>
@@ -103,11 +120,16 @@ export default function CalendarView({ kind }: { kind: 'fenetre' | 'paysagement'
           canEdit={canEdit}
           onAddJob={(dateISO, laneId) => setModal({ date: dateISO.slice(0, 10), team: laneId })}
           onJobClick={(job) => setModal({ job })}
+          onMoveJob={moveJob}
         />
       )}
 
-      {!canEdit && !loading && (
-        <p style={{ fontSize: 12, color: '#9CA3AF', marginTop: 8 }}>Lecture seule — seuls les admins peuvent céduler. Tes jobs sont surlignés.</p>
+      {!loading && (
+        <p style={{ fontSize: 12, color: '#9CA3AF', marginTop: 8 }}>
+          {canEdit
+            ? 'Glisse une job vers un autre jour ou une autre équipe pour la déplacer.'
+            : 'Lecture seule — seuls les admins peuvent céduler. Tes jobs sont surlignés.'}
+        </p>
       )}
 
       {modal && (

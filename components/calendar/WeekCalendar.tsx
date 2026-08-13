@@ -1,4 +1,5 @@
 'use client'
+import { useState } from 'react'
 import Link from 'next/link'
 import { Plus, Navigation, Play } from 'lucide-react'
 import { clientName, jobDirectionsUrl, type Job } from '@/lib/queries/calendar'
@@ -16,6 +17,8 @@ interface Props {
   canEdit: boolean
   onAddJob: (dateISO: string, laneId: string) => void
   onJobClick: (job: Job) => void
+  // glisser-déposer d'un job vers un autre jour / une autre équipe (admin)
+  onMoveJob?: (job: Job, dayKey: string, laneId: string) => void
 }
 
 const WEEKDAYS = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim']
@@ -33,9 +36,24 @@ const initials = (name: string | null | undefined) =>
   (name || '?').split(' ').map((p) => p[0]).slice(0, 2).join('').toUpperCase()
 
 export default function WeekCalendar({
-  weekStart, lanes, jobs, profileMap, currentUserId, canEdit, onAddJob, onJobClick,
+  weekStart, lanes, jobs, profileMap, currentUserId, canEdit, onAddJob, onJobClick, onMoveJob,
 }: Props) {
   const todayKey = ymd(new Date())
+  const dnd = canEdit && !!onMoveJob
+  // case survolée pendant un glisser (jour + équipe)
+  const [dragOver, setDragOver] = useState<{ day: string; lane: string } | null>(null)
+
+  const handleDrop = (e: React.DragEvent, dayKey: string, laneId: string) => {
+    e.preventDefault()
+    setDragOver(null)
+    const id = e.dataTransfer.getData('text/plain')
+    const job = jobs.find((j) => j.id === id)
+    if (!job) return
+    // rien à faire si on relâche là où le job était déjà
+    if (dayKeyOf(job.start_at) === dayKey && (job.team ?? 'equipe1') === laneId) return
+    onMoveJob?.(job, dayKey, laneId)
+  }
+
   const days = Array.from({ length: 7 }, (_, i) => {
     const d = new Date(weekStart + 'T00:00:00')
     d.setDate(d.getDate() + i)
@@ -64,8 +82,22 @@ export default function WeekCalendar({
                 const laneJobs = jobs
                   .filter((j) => dayKeyOf(j.start_at) === key && (j.team ?? 'equipe1') === lane.id)
                   .sort((a, b) => (a.start_at ?? '').localeCompare(b.start_at ?? ''))
+                const over = dragOver?.day === key && dragOver?.lane === lane.id
                 return (
-                  <div key={lane.id} style={{ background: '#FFF', border: '1px solid #E5E7EB', borderRadius: 10, overflow: 'hidden' }}>
+                  <div
+                    key={lane.id}
+                    onDragOver={dnd ? (e) => { e.preventDefault(); setDragOver({ day: key, lane: lane.id }) } : undefined}
+                    onDragLeave={dnd ? (e) => {
+                      // ignore les passages sur les enfants de la case
+                      if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDragOver(null)
+                    } : undefined}
+                    onDrop={dnd ? (e) => handleDrop(e, key, lane.id) : undefined}
+                    style={{
+                      background: over ? '#F0FDFA' : '#FFF',
+                      border: over ? `1px dashed ${lane.color}` : '1px solid #E5E7EB',
+                      borderRadius: 10, overflow: 'hidden',
+                    }}
+                  >
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 10px', borderLeft: `3px solid ${lane.color}` }}>
                       <span style={{ fontSize: 11, fontWeight: 700, color: '#6B7280', textTransform: 'uppercase', letterSpacing: '0.04em' }}>{lane.label}</span>
                       {canEdit && (
@@ -92,7 +124,15 @@ export default function WeekCalendar({
                           const gpsUrl = jobDirectionsUrl(job)
                           const route = job.type === 'gazon' ? findRoute(job.route_name) : null
                           return (
-                            <div key={job.id} role="button" tabIndex={0} onClick={() => onJobClick(job)} style={{
+                            <div
+                              key={job.id}
+                              role="button"
+                              tabIndex={0}
+                              onClick={() => onJobClick(job)}
+                              draggable={dnd}
+                              onDragStart={dnd ? (e) => { e.dataTransfer.setData('text/plain', job.id); e.dataTransfer.effectAllowed = 'move' } : undefined}
+                              onDragEnd={dnd ? () => setDragOver(null) : undefined}
+                              style={{
                               textAlign: 'left',
                               border: dispo ? '1px solid #8B5CF6' : `1px solid ${mine ? lane.color : '#E5E7EB'}`,
                               borderLeft: `3px solid ${dispo ? '#8B5CF6' : lane.color}`, borderRadius: 8,

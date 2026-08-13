@@ -2,8 +2,8 @@
 import { useEffect, useRef, useState } from 'react'
 import {
   getJobPhotos, addJobPhoto, deleteJobPhoto,
-  getJobExpenses, addJobExpense, deleteJobExpense,
-  type JobPhoto, type JobExpense,
+  getJobExpenses, addJobExpense, deleteJobExpense, getTeamProfiles,
+  type JobPhoto, type JobExpense, type AssignProfile,
 } from '@/lib/queries/calendar'
 import { uploadPhoto, photoUrl, deletePhoto } from '@/lib/storage'
 import { money2 } from '@/lib/payes'
@@ -35,14 +35,17 @@ export default function JobExtras({ jobId, userId, isAdmin, showPhotos = true }:
   const [showExpForm, setShowExpForm] = useState(false)
   const [expLabel, setExpLabel] = useState('')
   const [expAmount, setExpAmount] = useState('')
+  const [expPayer, setExpPayer] = useState<string>(userId ?? '') // qui a payé
   const [expFile, setExpFile] = useState<File | null>(null)
   const [savingExp, setSavingExp] = useState(false)
+  const [team, setTeam] = useState<AssignProfile[]>([])
   const expFileRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
-    Promise.all([getJobPhotos(jobId), getJobExpenses(jobId)]).then(([p, e]) => {
+    Promise.all([getJobPhotos(jobId), getJobExpenses(jobId), getTeamProfiles()]).then(([p, e, t]) => {
       setPhotos(p.photos)
       setExpenses(e.expenses)
+      setTeam(t)
       if (p.error || e.error) setMigrationMissing(true)
     })
   }, [jobId])
@@ -85,10 +88,10 @@ export default function JobExtras({ jobId, userId, isAdmin, showPhotos = true }:
       if (e) { setSavingExp(false); setError(e); return }
       photoPath = path
     }
-    const { error: e2 } = await addJobExpense({ job_id: jobId, profile_id: userId, label: expLabel.trim(), amount, photo_path: photoPath })
+    const { error: e2 } = await addJobExpense({ job_id: jobId, profile_id: expPayer || userId, label: expLabel.trim(), amount, photo_path: photoPath })
     setSavingExp(false)
     if (e2) { setError(e2); return }
-    setExpLabel(''); setExpAmount(''); setExpFile(null); setShowExpForm(false)
+    setExpLabel(''); setExpAmount(''); setExpFile(null); setExpPayer(userId ?? ''); setShowExpForm(false)
     const { expenses: fresh } = await getJobExpenses(jobId)
     setExpenses(fresh)
   }
@@ -145,7 +148,7 @@ export default function JobExtras({ jobId, userId, isAdmin, showPhotos = true }:
           <div key={x.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 0', borderTop: '1px solid #F3F4F6', fontSize: 13 }}>
             <div style={{ flex: 1, minWidth: 0 }}>
               <span style={{ fontWeight: 600, color: '#111827' }}>{x.label}</span>
-              <span style={{ fontSize: 11, color: '#9CA3AF', marginLeft: 6 }}>{x.profiles?.full_name ?? ''}</span>
+              <span style={{ fontSize: 11, color: '#9CA3AF', marginLeft: 6 }}>{x.profiles?.full_name ? `payé par ${x.profiles.full_name}` : ''}</span>
             </div>
             {x.photo_path && (
               <a href={photoUrl(x.photo_path)} target="_blank" rel="noopener noreferrer" aria-label="Facture" style={{ color: '#0E6B6E', display: 'inline-flex' }}>
@@ -167,6 +170,16 @@ export default function JobExtras({ jobId, userId, isAdmin, showPhotos = true }:
               <input value={expLabel} onChange={(e) => setExpLabel(e.target.value)} placeholder="Gaz, matériel…" style={{ ...inp, flex: 2 }} />
               <input value={expAmount} onChange={(e) => setExpAmount(e.target.value)} placeholder="0.00 $" type="number" inputMode="decimal" style={{ ...inp, flex: 1 }} />
             </div>
+            {/* qui a sorti l'argent (défaut : moi) */}
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, fontWeight: 700, color: '#6B7280' }}>
+              Payé par
+              <select value={expPayer} onChange={(e) => setExpPayer(e.target.value)} style={{ ...inp, flex: 1 }}>
+                {!userId && <option value="">—</option>}
+                {team.map((p) => (
+                  <option key={p.id} value={p.id}>{p.full_name ?? '—'}{p.id === userId ? ' (moi)' : ''}</option>
+                ))}
+              </select>
+            </label>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
               <button onClick={() => expFileRef.current?.click()} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '7px 10px', borderRadius: 8, border: '1px dashed #9CA3AF', background: '#FFF', color: expFile ? '#0D6E6F' : '#6B7280', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>
                 <Camera size={14} />{expFile ? 'Facture ✓' : 'Photo facture'}
