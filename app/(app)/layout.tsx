@@ -6,6 +6,7 @@ import Link from 'next/link'
 import Image from 'next/image'
 import { LogOut } from 'lucide-react'
 import AppHeader from '@/components/AppHeader'
+import RefreshButton from '@/components/RefreshButton'
 import { navForRole, mobileNavForRole, type NavItem } from '@/lib/nav'
 import { isManager } from '@/lib/roles'
 
@@ -173,6 +174,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       <div className="mw-main">
         <div className="mw-header-mobile"><AppHeader /></div>
         <main className="mw-content">{children}</main>
+        <RefreshButton />
 
         {/* Bottom-nav (mobile) — défile horizontalement si plus d'items que l'écran n'en affiche */}
         <nav className="mw-bottomnav">

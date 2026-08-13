@@ -122,4 +122,10 @@ html, body {
   .mw-header-mobile { display: none; }
 }
 
+/* Bouton flottant « Rafraîchir » — au-dessus du bottom-nav en mobile */
+.mw-refresh { bottom: calc(78px + env(safe-area-inset-bottom)); }
+@media (min-width: 1024px) {
+  .mw-refresh { bottom: calc(20px + env(safe-area-inset-bottom)); }
+}
+
 @keyframes mw-spin { to { transform: rotate(360deg); } }
