@@ -1,5 +1,7 @@
 // Navigation unifiée par rôle (admin | lead | rep | tech | terrain)
-// Sidebar desktop = NAV_BY_ROLE (sections) ; bottom-nav mobile = MOBILE_NAV_BY_ROLE (max ~5).
+// Sidebar desktop = NAV_BY_ROLE (sections). Bottom-nav mobile = mobileNavForRole()
+// (aplatit NAV_BY_ROLE, dédupliqué par href) — même source, même ordre que le desktop,
+// le bottom-nav défile horizontalement s'il y a plus d'items que l'écran n'en affiche.
 import {
   Home, Map, BarChart2, KanbanSquare, CalendarDays, Leaf,
   Users, FileText, Wallet, Clock, Database, User, Sprout,
@@ -74,12 +76,21 @@ export const TERRAIN_EXTRA: NavSection = {
   items: [I.pointage, I.gazon, I.calPays],
 }
 
-export const MOBILE_NAV_BY_ROLE: Record<string, NavItem[]> = {
-  admin:   [I.accueil, I.pipeline, I.calFen, I.payes, I.profil],
-  lead:    [I.accueil, I.pipeline, I.carte, I.calFen, I.profil],
-  rep:     [I.carte, I.pipeline, I.dashboard, I.payesPerso, I.profil],
-  tech:    [I.calFen, I.pipeline, I.soumissions, I.payesPerso, I.profil],
-  terrain: [I.pointage, I.gazon, I.calPays, I.payesPerso, I.profil],
+// Items du bottom-nav mobile pour un rôle : tout ce que ce rôle voit dans la
+// sidebar desktop (secondary_role inclus), aplatis et dédupliqués par href.
+// Pas de plafond à 5 — le bottom-nav défile horizontalement au besoin (cf. .mw-bottomnav).
+export function mobileNavForRole(role: string, secondaryRole?: string | null): NavItem[] {
+  const sections = navForRole(role, secondaryRole)
+  const seen = new Set<string>()
+  const items: NavItem[] = []
+  for (const section of sections) {
+    for (const item of section.items) {
+      if (seen.has(item.href)) continue
+      seen.add(item.href)
+      items.push(item)
+    }
+  }
+  return items
 }
 
 // Page d'atterrissage par défaut selon le rôle

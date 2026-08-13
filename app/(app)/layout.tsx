@@ -1,12 +1,12 @@
 'use client'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useRouter, usePathname } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import Link from 'next/link'
 import Image from 'next/image'
 import { LogOut } from 'lucide-react'
 import AppHeader from '@/components/AppHeader'
-import { navForRole, MOBILE_NAV_BY_ROLE, type NavItem } from '@/lib/nav'
+import { navForRole, mobileNavForRole, type NavItem } from '@/lib/nav'
 import { isManager } from '@/lib/roles'
 
 const ROLE_LABEL: Record<string, string> = {
@@ -25,6 +25,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   const [profile, setProfile] = useState<{ role: string; secondary_role: string | null; full_name: string | null; color: string | null } | null>(null)
   const [userId, setUserId] = useState<string | null>(null)
   const [unread, setUnread] = useState(0)
+  const activeLinkRef = useRef<HTMLAnchorElement>(null)
 
   useEffect(() => {
     supabase.auth.getSession().then(async ({ data: { session } }) => {
@@ -74,6 +75,11 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     else nav.clearAppBadge?.().catch(() => {})
   }, [unread])
 
+  // Amène l'item actif du bottom-nav dans le champ visible (rôles avec >5 items → défilement)
+  useEffect(() => {
+    activeLinkRef.current?.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' })
+  }, [pathname])
+
   const logout = async () => {
     await supabase.auth.signOut()
     router.push('/login')
@@ -96,8 +102,8 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     </div>
   )
 
-  const sections   = navForRole(profile.role, profile.secondary_role)
-  const mobileItems = MOBILE_NAV_BY_ROLE[profile.role] ?? MOBILE_NAV_BY_ROLE.rep
+  const sections    = navForRole(profile.role, profile.secondary_role)
+  const mobileItems = mobileNavForRole(profile.role, profile.secondary_role)
   const initials = (profile.full_name ?? '?').split(' ').map(s => s[0]).slice(0, 2).join('').toUpperCase()
 
   const navLinkDesktop = (item: NavItem) => {
@@ -168,14 +174,14 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         <div className="mw-header-mobile"><AppHeader /></div>
         <main className="mw-content">{children}</main>
 
-        {/* Bottom-nav (mobile) */}
+        {/* Bottom-nav (mobile) — défile horizontalement si plus d'items que l'écran n'en affiche */}
         <nav className="mw-bottomnav">
           {mobileItems.map(({ href, label, Icon }) => {
             const active = isActive(pathname, href)
             return (
-              <Link key={href + label} href={href} style={{
-                flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center',
-                padding: '10px 4px 9px', textDecoration: 'none', gap: 4,
+              <Link key={href + label} href={href} ref={active ? activeLinkRef : undefined} style={{
+                flex: '0 0 auto', minWidth: 68, display: 'flex', flexDirection: 'column', alignItems: 'center',
+                padding: '10px 8px 9px', textDecoration: 'none', gap: 4, scrollSnapAlign: 'start',
                 borderTop: active ? '2px solid #69C9CA' : '2px solid transparent',
               }}>
                 <span style={{ position: 'relative', display: 'inline-flex' }}>
@@ -190,7 +196,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
                 </span>
                 <span style={{
                   fontSize: 9.5, fontWeight: 600, letterSpacing: 0.3, textTransform: 'uppercase',
-                  color: active ? '#69C9CA' : '#4B5563',
+                  color: active ? '#69C9CA' : '#4B5563', whiteSpace: 'nowrap',
                 }}>{label}</span>
               </Link>
             )

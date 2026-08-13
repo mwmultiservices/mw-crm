@@ -79,16 +79,25 @@ html, body {
 /* Sidebar — cachée en mobile */
 .mw-sidebar { display: none; }
 
-/* Bottom-nav — visible en mobile */
+/* Bottom-nav — visible en mobile. Défile horizontalement quand un rôle a plus
+   d'items que l'écran n'en affiche (ex. admin/lead) au lieu de les tronquer. */
 .mw-bottomnav {
   display: flex;
+  /* PAS de justify-content:center — combiné à overflow-x:auto, ça rend le début
+     du contenu inatteignable au scroll dans certains navigateurs (bug connu). */
   background: #000;
   border-top: 1px solid rgba(255,255,255,0.08);
   padding-bottom: max(10px, env(safe-area-inset-bottom));
   padding-left: env(safe-area-inset-left);
   padding-right: env(safe-area-inset-right);
   flex-shrink: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+  scroll-snap-type: x proximity;
+  scrollbar-width: none; /* Firefox */
 }
+.mw-bottomnav::-webkit-scrollbar { display: none; } /* Chrome/Safari */
 .mw-header-mobile {
   display: flex;
   flex-shrink: 0;
