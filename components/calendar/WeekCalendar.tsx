@@ -1,6 +1,8 @@
 'use client'
-import { Plus, Navigation } from 'lucide-react'
+import Link from 'next/link'
+import { Plus, Navigation, Play } from 'lucide-react'
 import { clientName, jobDirectionsUrl, type Job } from '@/lib/queries/calendar'
+import { findRoute } from '@/lib/gazon-routes'
 
 export interface Lane { id: string; label: string; color: string }
 export interface ProfileMini { full_name: string | null; color: string | null }
@@ -88,6 +90,7 @@ export default function WeekCalendar({
                           const canceled = job.status === 'canceled'
                           const dispo = job.status === 'dispo' // slot mauve « à vendre »
                           const gpsUrl = jobDirectionsUrl(job)
+                          const route = job.type === 'gazon' ? findRoute(job.route_name) : null
                           return (
                             <div key={job.id} role="button" tabIndex={0} onClick={() => onJobClick(job)} style={{
                               textAlign: 'left',
@@ -103,7 +106,17 @@ export default function WeekCalendar({
                                   {canceled && <span style={{ marginLeft: 6, textDecoration: 'line-through' }}>annulé</span>}
                                   {dispo && <span style={{ marginLeft: 6, padding: '0 6px', borderRadius: 999, background: '#8B5CF6', color: '#FFF', fontSize: 9, fontWeight: 800, letterSpacing: '0.04em' }}>DISPO</span>}
                                 </div>
-                                {gpsUrl && (
+                                {route ? (
+                                  <Link
+                                    href={`/gazon?route=${encodeURIComponent(route.id)}`}
+                                    onClick={(e) => e.stopPropagation()}
+                                    title="Démarrer la run"
+                                    aria-label="Démarrer la run"
+                                    style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 22, height: 22, borderRadius: 6, color: '#FFF', background: '#697035', flexShrink: 0 }}
+                                  >
+                                    <Play size={12} />
+                                  </Link>
+                                ) : gpsUrl && (
                                   <a
                                     href={gpsUrl}
                                     target="_blank"
@@ -118,9 +131,9 @@ export default function WeekCalendar({
                                 )}
                               </div>
                               <div style={{ fontSize: 13, fontWeight: 600, color: '#111827', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                                {clientName(job) || job.title || job.service || 'Job'}
+                                {route ? `🌿 ${route.label}` : (clientName(job) || job.title || job.service || 'Job')}
                               </div>
-                              {job.route_name && <div style={{ fontSize: 11, color: '#697035' }}>🌿 {job.route_name}</div>}
+                              {!route && job.route_name && <div style={{ fontSize: 11, color: '#697035' }}>🌿 {job.route_name}</div>}
                               {job.service && (clientName(job) || job.title) && <div style={{ fontSize: 11, color: '#6B7280' }}>{job.service}</div>}
                               {job.assigned_ids?.length > 0 && (
                                 <div style={{ display: 'flex', gap: 3, marginTop: 5, flexWrap: 'wrap' }}>

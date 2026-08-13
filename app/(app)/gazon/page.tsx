@@ -1,7 +1,10 @@
 'use client'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import Link from 'next/link'
+import { useSearchParams } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { isManager } from '@/lib/roles'
+import { findRoute, routeOfSecteur, groupKeyOfSecteur } from '@/lib/gazon-routes'
 import { mondayOf, addWeeks, formatWeekLabel } from '@/lib/payes'
 import {
   getTerrains, getPassagesWeek, getPassagesRange, setPassage, clearPassage,
@@ -11,7 +14,7 @@ import {
 import { uploadPhoto, photoUrl, deletePhoto } from '@/lib/storage'
 import {
   ChevronLeft, ChevronRight, Plus, Navigation, Phone, Camera,
-  Check, AlertTriangle, X, Trash2, Route, Table2, ListChecks,
+  Check, AlertTriangle, X, Trash2, Route, Table2, ListChecks, ArrowLeft,
 } from 'lucide-react'
 
 // Début de saison (1re semaine du fichier du client) — borne gauche du datasheet.
@@ -20,7 +23,18 @@ const SEASON_START = '2026-05-04'
 const GREEN = '#697035'
 const ORANGE = '#B45309'
 
+// useSearchParams() doit vivre sous une frontière <Suspense> (prerendering Next).
 export default function GazonPage() {
+  return (
+    <Suspense fallback={<div style={page}><div style={{ padding: 40, textAlign: 'center', color: '#9CA3AF' }}>Chargement…</div></div>}>
+      <GazonRun />
+    </Suspense>
+  )
+}
+
+function GazonRun() {
+  // ?route=<id> : run verrouillée sur UNE route (lien « Démarrer la job » du calendrier)
+  const lockedRoute = findRoute(useSearchParams().get('route'))
   const [role, setRole] = useState<string | null>(null)
   const [userId, setUserId] = useState<string | null>(null)
   const [weekOf, setWeekOf] = useState(mondayOf())
@@ -29,7 +43,7 @@ export default function GazonPage() {
   const [migrationError, setMigrationError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [view, setView] = useState<'run' | 'datasheet'>('run')
-  const [secteur, setSecteur] = useState<string>('Tous')
+  const [groupFilter, setGroupFilter] = useState<string>('Tous') // id de route (ou secteur orphelin)
   const [modal, setModal] = useState<{ terrain?: GazonTerrain } | null>(null) // {} = nouveau
 
   const admin = isManager(role)
@@ -69,17 +83,37 @@ export default function GazonPage() {
     return () => { supabase.removeChannel(ch) }
   }, [weekOf, loadPassages, loadTerrains])
 
-  // secteurs dans l'ordre de la run (position globale)
+  // secteurs bruts dans l'ordre de la run (position globale) — pour le modal terrain
   const secteurs = useMemo(() => {
     const seen: string[] = []
     for (const t of terrains) if (!seen.includes(t.secteur)) seen.push(t.secteur)
     return seen
   }, [terrains])
 
-  const visible = useMemo(
-    () => terrains.filter((t) => t.active && (secteur === 'Tous' || t.secteur === secteur)),
-    [terrains, secteur],
-  )
+  // filtres = routes (un secteur ajouté à la main hors des 4 routes fait son propre groupe)
+  const groups = useMemo(() => {
+    const seen: { key: string; label: string }[] = []
+    for (const t of terrains) {
+      const r = routeOfSecteur(t.secteur)
+      const key = r?.id ?? t.secteur
+      if (!seen.some((g) => g.key === key)) seen.push({ key, label: r?.label ?? t.secteur })
+    }
+    return seen
+  }, [terrains])
+
+  const visible = useMemo(() => terrains.filter((t) => {
+    if (!t.active) return false
+    const key = groupKeyOfSecteur(t.secteur)
+    if (lockedRoute) return key === lockedRoute.id
+    return groupFilter === 'Tous' || key === groupFilter
+  }), [terrains, groupFilter, lockedRoute])
+
+  // sous-titres = secteurs bruts présents dans la sélection, dans l'ordre de passage
+  const visibleSecteurs = useMemo(() => {
+    const out: string[] = []
+    for (const t of visible) if (!out.includes(t.secteur)) out.push(t.secteur)
+    return out
+  }, [visible])
 
   const aFaire = visible.filter((t) => !t.a_eviter)
   const faits = aFaire.filter((t) => passages.get(t.id)?.status === 'fait').length
@@ -107,8 +141,13 @@ export default function GazonPage() {
 
   return (
     <div style={page}>
+      {lockedRoute && (
+        <Link href="/calendrier/paysagement" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13, fontWeight: 600, color: '#6B7280', textDecoration: 'none', marginBottom: 8 }}>
+          <ArrowLeft size={15} />Calendrier
+        </Link>
+      )}
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 12 }}>
-        <h1 style={{ fontSize: 22, fontWeight: 700, color: '#111827', margin: 0 }}>🌿 Run de gazon</h1>
+        <h1 style={{ fontSize: 22, fontWeight: 700, color: '#111827', margin: 0 }}>🌿 {lockedRoute ? lockedRoute.label : 'Run de gazon'}</h1>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginLeft: 'auto' }}>
           <button onClick={() => setWeekOf(addWeeks(weekOf, -1))} style={navBtn} aria-label="Semaine précédente"><ChevronLeft size={16} /></button>
           <span style={{ fontSize: 13, fontWeight: 600, color: '#374151', minWidth: 150, textAlign: 'center' }}>{formatWeekLabel(weekOf)}</span>
@@ -126,7 +165,7 @@ export default function GazonPage() {
 
       {/* barre d'actions */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
-        {admin && (
+        {admin && !lockedRoute && (
           <div style={{ display: 'flex', gap: 6 }}>
             <Tab active={view === 'run'} onClick={() => setView('run')}><ListChecks size={14} /> Run</Tab>
             <Tab active={view === 'datasheet'} onClick={() => setView('datasheet')}><Table2 size={14} /> Datasheet</Tab>
@@ -142,15 +181,17 @@ export default function GazonPage() {
         </div>
       </div>
 
-      {/* filtres secteur + progression */}
-      <div style={{ display: 'flex', gap: 6, overflowX: 'auto', paddingBottom: 6, marginBottom: 8 }}>
-        {['Tous', ...secteurs].map((s) => (
-          <button key={s} onClick={() => setSecteur(s)} style={{
-            padding: '6px 12px', borderRadius: 999, fontSize: 12, fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap',
-            border: 'none', background: secteur === s ? '#111827' : '#F3F4F6', color: secteur === s ? '#FFF' : '#374151',
-          }}>{s}</button>
-        ))}
-      </div>
+      {/* filtres route + progression (masqués si la run est verrouillée sur une route) */}
+      {!lockedRoute && (
+        <div style={{ display: 'flex', gap: 6, overflowX: 'auto', paddingBottom: 6, marginBottom: 8 }}>
+          {[{ key: 'Tous', label: 'Toutes' }, ...groups].map((g) => (
+            <button key={g.key} onClick={() => setGroupFilter(g.key)} style={{
+              padding: '6px 12px', borderRadius: 999, fontSize: 12, fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap',
+              border: 'none', background: groupFilter === g.key ? '#111827' : '#F3F4F6', color: groupFilter === g.key ? '#FFF' : '#374151',
+            }}>{g.label}</button>
+          ))}
+        </div>
+      )}
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
         <div style={{ flex: 1, height: 8, borderRadius: 999, background: '#E5E7EB', overflow: 'hidden' }}>
           <div style={{ width: `${aFaire.length ? (faits / aFaire.length) * 100 : 0}%`, height: '100%', background: GREEN, borderRadius: 999, transition: 'width .3s' }} />
@@ -158,11 +199,11 @@ export default function GazonPage() {
         <span style={{ fontSize: 12, fontWeight: 700, color: GREEN, whiteSpace: 'nowrap' }}>{faits}/{aFaire.length} faits</span>
       </div>
 
-      {view === 'datasheet' && admin ? (
+      {view === 'datasheet' && admin && !lockedRoute ? (
         <Datasheet terrains={terrains.filter((t) => t.active)} weekOf={weekOf} />
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-          {(secteur === 'Tous' ? secteurs : [secteur]).map((s) => {
+          {visibleSecteurs.map((s) => {
             const list = visible.filter((t) => t.secteur === s)
             if (!list.length) return null
             const done = list.filter((t) => !t.a_eviter && passages.get(t.id)?.status === 'fait').length

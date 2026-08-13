@@ -63,8 +63,10 @@ export const NAV_BY_ROLE: Record<string, NavSection[]> = {
     { title: 'Finance',    items: [I.payesPerso] },
     { title: 'Compte',     items: [I.profil] },
   ],
+  // pas de /gazon : l'employé ouvre SA run depuis son job au calendrier
+  // (« Démarrer la job » → /gazon?route=…), il ne voit pas les autres routes.
   terrain: [
-    { title: 'Mon espace', items: [I.pointage, I.gazon, I.calPays] },
+    { title: 'Mon espace', items: [I.pointage, I.calPays] },
     { title: 'Finance',    items: [I.payesPerso] },
     { title: 'Compte',     items: [I.profil] },
   ],
@@ -73,7 +75,7 @@ export const NAV_BY_ROLE: Record<string, NavSection[]> = {
 // Items supplémentaires si capacité secondaire paysagement (ex. rep + terrain)
 export const TERRAIN_EXTRA: NavSection = {
   title: 'Paysagement',
-  items: [I.pointage, I.gazon, I.calPays],
+  items: [I.pointage, I.calPays],
 }
 
 // Items du bottom-nav mobile pour un rôle : tout ce que ce rôle voit dans la

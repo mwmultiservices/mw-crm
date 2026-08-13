@@ -1,9 +1,11 @@
 'use client'
 import { useState } from 'react'
+import Link from 'next/link'
 import { createJob, updateJob, deleteJob, clientName, type Job, type JobInput, type AssignProfile } from '@/lib/queries/calendar'
+import { GAZON_ROUTES, findRoute, routeLabel } from '@/lib/gazon-routes'
 import type { Lane } from './WeekCalendar'
 import JobExtras from './JobExtras'
-import { Trash2, Navigation, Phone } from 'lucide-react'
+import { Trash2, Navigation, Phone, Play } from 'lucide-react'
 
 interface Props {
   kind: 'fenetre' | 'paysagement'
@@ -42,7 +44,8 @@ export default function JobModal({ kind, canEdit = true, userId = null, lanes, a
   const [type, setType] = useState(job?.type ?? (kind === 'fenetre' ? 'fenetre' : 'gazon'))
   const [title, setTitle] = useState(job ? (clientName(job) || job.title || '') : '')
   const [service, setService] = useState(job?.service ?? '')
-  const [routeName, setRouteName] = useState(job?.route_name ?? '')
+  // route de gazon : on stocke l'id de la route (tolère les anciennes valeurs texte libre)
+  const [routeName, setRouteName] = useState(findRoute(job?.route_name)?.id ?? '')
   const [address, setAddress] = useState(job?.address ?? '')
   const [clientPhone, setClientPhone] = useState(job?.client_phone ?? '')
   const [clientEmail, setClientEmail] = useState(job?.client_email ?? '')
@@ -63,26 +66,28 @@ export default function JobModal({ kind, canEdit = true, userId = null, lanes, a
     setAssigned((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]))
 
   const save = async () => {
+    // gazon = une route à suivre : ni client, ni adresse, ni prix — juste la route
+    if (isGazon && !routeName) { setError('Route requise.'); return }
     // un slot dispo n'a pas encore de client — titre optionnel
-    if (!title.trim() && status !== 'dispo') { setError(kind === 'fenetre' ? 'Nom du client / job requis.' : 'Nom du job requis.'); return }
+    if (!isGazon && !title.trim() && status !== 'dispo') { setError(kind === 'fenetre' ? 'Nom du client / job requis.' : 'Nom du job requis.'); return }
     if (!date) { setError('Date requise.'); return }
     setSaving(true); setError('')
     const payload: JobInput = {
-      title: title.trim() || (status === 'dispo' ? 'Dispo' : null),
-      service: service || null,
+      title: isGazon ? routeLabel(routeName) : (title.trim() || (status === 'dispo' ? 'Dispo' : null)),
+      service: isGazon ? null : (service || null),
       type,
       team,
       assigned_ids: assigned,
-      route_name: isGazon ? (routeName || null) : null,
-      address: address.trim() || null,
+      route_name: isGazon ? routeName : null,
+      address: isGazon ? null : (address.trim() || null),
       start_at: buildISO(date, start),
       end_at: buildISO(date, end),
       status,
-      price: price ? Number(price) : null,
+      price: isGazon ? null : (price ? Number(price) : null),
       notes: notes || null,
     }
     // colonnes récentes : omises si vides pour tolérer une migration pas encore appliquée
-    if (clientPhone.trim() || clientEmail.trim() || job?.client_phone != null || job?.client_email != null) {
+    if (!isGazon && (clientPhone.trim() || clientEmail.trim() || job?.client_phone != null || job?.client_email != null)) {
       payload.client_phone = clientPhone.trim() || null
       payload.client_email = clientEmail.trim() || null
     }
@@ -107,6 +112,17 @@ export default function JobModal({ kind, canEdit = true, userId = null, lanes, a
       <div onClick={(e) => e.stopPropagation()} style={{ background: '#FFF', borderRadius: 14, padding: 20, width: 'min(460px, 100%)', maxHeight: '90vh', overflowY: 'auto', fontFamily: 'Inter, sans-serif' }}>
         <h2 style={{ fontSize: 18, fontWeight: 700, color: '#111827', margin: '0 0 16px' }}>{ro ? 'Détails du job' : isEdit ? 'Modifier le job' : 'Nouveau job'}</h2>
 
+        {/* gazon : ouvre la run filtrée sur CETTE route (l'employé ne voit que la sienne) */}
+        {isEdit && isGazon && routeName && (
+          <Link href={`/gazon?route=${encodeURIComponent(routeName)}`} style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, marginBottom: 14,
+            padding: '12px 14px', borderRadius: 10, background: '#697035', color: '#FFF',
+            fontSize: 15, fontWeight: 800, textDecoration: 'none',
+          }}>
+            <Play size={17} />Démarrer la job
+          </Link>
+        )}
+
         <fieldset disabled={ro} style={{ display: 'flex', flexDirection: 'column', gap: 10, border: 'none', padding: 0, margin: 0, minInlineSize: 'auto' }}>
           {kind === 'paysagement' && (
             <Field label="Type">
@@ -122,48 +138,56 @@ export default function JobModal({ kind, canEdit = true, userId = null, lanes, a
             </Field>
           )}
 
-          <Field label={kind === 'fenetre' ? 'Client / job *' : 'Nom du job *'}>
-            <input value={title} onChange={(e) => setTitle(e.target.value)} style={inp} autoFocus placeholder={kind === 'fenetre' ? 'Famille Tremblay' : 'Tonte secteur Magog'} />
-          </Field>
+          {isGazon ? (
+            /* gazon = une route de plusieurs clients : pas de nom, d'adresse ni de prix */
+            <Field label="Route *">
+              <select value={routeName} onChange={(e) => setRouteName(e.target.value)} style={inp} autoFocus>
+                <option value="">— Choisir une route —</option>
+                {GAZON_ROUTES.map((r) => <option key={r.id} value={r.id}>{r.label}</option>)}
+              </select>
+            </Field>
+          ) : (
+            <>
+              <Field label={kind === 'fenetre' ? 'Client / job *' : 'Nom du job *'}>
+                <input value={title} onChange={(e) => setTitle(e.target.value)} style={inp} autoFocus placeholder={kind === 'fenetre' ? 'Famille Tremblay' : 'Aménagement pavé uni'} />
+              </Field>
 
-          {isGazon && (
-            <Field label="Route (gazon)"><input value={routeName} onChange={(e) => setRouteName(e.target.value)} style={inp} placeholder="Route Lundi A" /></Field>
-          )}
+              <Field label="Service"><input value={service} onChange={(e) => setService(e.target.value)} style={inp} placeholder={kind === 'fenetre' ? 'Lavage ext.' : 'Pavé + plate-bandes'} /></Field>
 
-          <Field label="Service"><input value={service} onChange={(e) => setService(e.target.value)} style={inp} placeholder={kind === 'fenetre' ? 'Lavage ext.' : 'Tonte + plate-bandes'} /></Field>
+              <Field label="Adresse">
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <input value={address} onChange={(e) => setAddress(e.target.value)} style={inp} placeholder="123 rue Principale, Magog" />
+                  {address.trim() && (
+                    <a
+                      href={`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(address.trim())}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      aria-label="Ouvrir l'itinéraire"
+                      style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', flex: '0 0 40px', borderRadius: 8, border: '1px solid #69C9CA', background: '#69C9CA14', color: '#0E6B6E' }}
+                    >
+                      <Navigation size={16} />
+                    </a>
+                  )}
+                </div>
+              </Field>
 
-          <Field label="Adresse">
-            <div style={{ display: 'flex', gap: 6 }}>
-              <input value={address} onChange={(e) => setAddress(e.target.value)} style={inp} placeholder="123 rue Principale, Magog" />
-              {address.trim() && (
-                <a
-                  href={`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(address.trim())}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  aria-label="Ouvrir l'itinéraire"
-                  style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', flex: '0 0 40px', borderRadius: 8, border: '1px solid #69C9CA', background: '#69C9CA14', color: '#0E6B6E' }}
-                >
-                  <Navigation size={16} />
-                </a>
-              )}
-            </div>
-          </Field>
-
-          <div style={{ display: 'flex', gap: 10 }}>
-            <Field label="Téléphone client" flex>
-              <div style={{ display: 'flex', gap: 6 }}>
-                <input value={clientPhone} onChange={(e) => setClientPhone(e.target.value)} style={inp} inputMode="tel" placeholder="514-555-1234" />
-                {clientPhone.trim() && (
-                  <a href={`tel:${clientPhone.trim()}`} aria-label="Appeler" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', flex: '0 0 40px', borderRadius: 8, border: '1px solid #69C9CA', background: '#69C9CA14', color: '#0E6B6E' }}>
-                    <Phone size={16} />
-                  </a>
-                )}
+              <div style={{ display: 'flex', gap: 10 }}>
+                <Field label="Téléphone client" flex>
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    <input value={clientPhone} onChange={(e) => setClientPhone(e.target.value)} style={inp} inputMode="tel" placeholder="514-555-1234" />
+                    {clientPhone.trim() && (
+                      <a href={`tel:${clientPhone.trim()}`} aria-label="Appeler" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', flex: '0 0 40px', borderRadius: 8, border: '1px solid #69C9CA', background: '#69C9CA14', color: '#0E6B6E' }}>
+                        <Phone size={16} />
+                      </a>
+                    )}
+                  </div>
+                </Field>
+                <Field label="Courriel client" flex>
+                  <input value={clientEmail} onChange={(e) => setClientEmail(e.target.value)} style={inp} type="email" autoCapitalize="none" placeholder="client@exemple.com" />
+                </Field>
               </div>
-            </Field>
-            <Field label="Courriel client" flex>
-              <input value={clientEmail} onChange={(e) => setClientEmail(e.target.value)} style={inp} type="email" autoCapitalize="none" placeholder="client@exemple.com" />
-            </Field>
-          </div>
+            </>
+          )}
 
           <div style={{ display: 'flex', gap: 10 }}>
             <Field label="Date" flex><input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={inp} /></Field>
@@ -177,7 +201,7 @@ export default function JobModal({ kind, canEdit = true, userId = null, lanes, a
           <div style={{ display: 'flex', gap: 10 }}>
             <Field label="Début" flex><input type="time" value={start} onChange={(e) => setStart(e.target.value)} style={inp} /></Field>
             <Field label="Fin" flex><input type="time" value={end} onChange={(e) => setEnd(e.target.value)} style={inp} /></Field>
-            <Field label="Prix ($)" flex><input value={price} onChange={(e) => setPrice(e.target.value)} type="number" inputMode="decimal" style={inp} /></Field>
+            {!isGazon && <Field label="Prix ($)" flex><input value={price} onChange={(e) => setPrice(e.target.value)} type="number" inputMode="decimal" style={inp} /></Field>}
           </div>
 
           <Field label={kind === 'fenetre' ? 'Techniciens assignés' : 'Équipe assignée'}>
