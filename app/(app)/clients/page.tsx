@@ -8,6 +8,7 @@ import {
   getClients, getClientHistory, createClient, updateClient, deleteClient,
   directionsUrl, type Client, type ClientHistory,
 } from '@/lib/queries/clients'
+import { getQuote, STATUS_BY_ID, CATEGORY_LABELS, type Quote } from '@/lib/queries/soumissions'
 import { Plus, Search, Users, Navigation, Phone, Mail, MapPin, X, Trash2, Pencil, RefreshCw } from 'lucide-react'
 
 const SERVICE_LABELS: Record<string, string> = { fenetre: 'Fenêtres', paysagement: 'Paysagement', projet: 'Projet' }
@@ -167,6 +168,7 @@ function ClientDrawer({ client, canDelete, onClose, onEdit, onDeleted }: {
   client: Client; canDelete: boolean; onClose: () => void; onEdit: () => void; onDeleted: () => void
 }) {
   const [hist, setHist] = useState<ClientHistory | null>(null)
+  const [quoteId, setQuoteId] = useState<string | null>(null) // fiche soumission ouverte
   const gps = directionsUrl(client)
 
   useEffect(() => { getClientHistory(client.id).then(setHist) }, [client.id])
@@ -235,7 +237,14 @@ function ClientDrawer({ client, canDelete, onClose, onEdit, onDeleted }: {
               </HistGroup>
               <HistGroup title={`Soumissions (${hist.quotes.length})`} empty={hist.quotes.length === 0}>
                 {hist.quotes.map((q) => (
-                  <HistRow key={q.id} left={q.service_type || 'Soumission'} mid={q.status} right={q.price ? money(Number(q.price)) : ''} date={q.created_at} />
+                  <HistRow
+                    key={q.id}
+                    left={q.service_type || 'Soumission'}
+                    mid={STATUS_BY_ID[q.status]?.label ?? q.status}
+                    right={q.price ? money(Number(q.price)) : ''}
+                    date={q.created_at}
+                    onClick={() => setQuoteId(q.id)}
+                  />
                 ))}
               </HistGroup>
               <HistGroup title={`Jobs (${hist.jobs.length})`} empty={hist.jobs.length === 0}>
@@ -247,7 +256,69 @@ function ClientDrawer({ client, canDelete, onClose, onEdit, onDeleted }: {
           )}
         </div>
       </aside>
+
+      {quoteId && <QuoteDetailModal quoteId={quoteId} onClose={() => setQuoteId(null)} />}
     </>
+  )
+}
+
+// ----------------------------------------------------------------------------
+// Fiche soumission (lecture seule) — ouverte depuis l'historique d'un client.
+function QuoteDetailModal({ quoteId, onClose }: { quoteId: string; onClose: () => void }) {
+  const [quote, setQuote] = useState<Quote | null>(null)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    getQuote(quoteId).then((q) => { setQuote(q); setLoading(false) })
+  }, [quoteId])
+
+  const st = quote ? STATUS_BY_ID[quote.status] : null
+
+  return (
+    <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', zIndex: 60, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: '#FFF', borderRadius: 14, padding: 20, width: 'min(420px, 100%)', maxHeight: '90vh', overflowY: 'auto', fontFamily: 'Inter, sans-serif' }}>
+        {loading ? (
+          <div style={{ padding: 20, textAlign: 'center', color: '#9CA3AF', fontSize: 13 }}>Chargement…</div>
+        ) : !quote ? (
+          <div style={{ padding: 20, textAlign: 'center', color: '#9CA3AF', fontSize: 13 }}>Soumission introuvable.</div>
+        ) : (
+          <>
+            <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 }}>
+              <div>
+                <div style={{ fontSize: 18, fontWeight: 700, color: '#111827' }}>
+                  {quote.type === 'facture' ? 'Facture' : 'Devis'}
+                </div>
+                <div style={{ fontSize: 12, color: '#9CA3AF' }}>{fmtDate(quote.created_at)}</div>
+              </div>
+              <button onClick={onClose} aria-label="Fermer" style={iconBtn}><X size={18} /></button>
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '14px 0' }}>
+              {st && <span style={{ padding: '4px 12px', borderRadius: 999, fontSize: 12, fontWeight: 700, background: st.bg, color: st.color }}>{st.label}</span>}
+              {quote.price != null && <span style={{ marginLeft: 'auto', fontSize: 22, fontWeight: 800, color: '#0D6E6F' }}>{money(Number(quote.price))}</span>}
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <DetailRow label="Client" value={quote.client_name || '—'} />
+              {quote.client_email && <DetailRow label="Courriel" value={quote.client_email} />}
+              <DetailRow label="Service" value={quote.service_type || '—'} />
+              {quote.service_category && <DetailRow label="Catégorie" value={CATEGORY_LABELS[quote.service_category] ?? quote.service_category} />}
+              {quote.plan && <DetailRow label="Plan" value={quote.plan} />}
+              <DetailRow label="QuickBooks" value={quote.quickbooks_id ? `Synchronisé${quote.quickbooks_emailed_at ? ` · envoyé le ${fmtDate(quote.quickbooks_emailed_at)}` : ''}` : 'Non synchronisé'} />
+            </div>
+
+            {quote.notes && (
+              <div style={{ marginTop: 14 }}>
+                <Label>Notes</Label>
+                <div style={{ fontSize: 13, color: '#374151', whiteSpace: 'pre-wrap', background: '#F9FAFB', borderRadius: 8, padding: 10 }}>{quote.notes}</div>
+              </div>
+            )}
+
+            <button onClick={onClose} style={{ ...primaryBtn, width: '100%', justifyContent: 'center', marginTop: 18 }}>Fermer</button>
+          </>
+        )}
+      </div>
+    </div>
   )
 }
 
@@ -367,13 +438,34 @@ function HistGroup({ title, empty, children }: { title: string; empty: boolean; 
     </div>
   )
 }
-function HistRow({ left, mid, right, date }: { left: string; mid: string; right: string; date: string | null }) {
+function HistRow({ left, mid, right, date, onClick }: {
+  left: string; mid: string; right: string; date: string | null; onClick?: () => void
+}) {
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, padding: '6px 8px', background: '#F9FAFB', borderRadius: 6 }}>
+    <div
+      onClick={onClick}
+      role={onClick ? 'button' : undefined}
+      tabIndex={onClick ? 0 : undefined}
+      title={onClick ? 'Voir la fiche' : undefined}
+      style={{
+        display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, padding: '6px 8px', borderRadius: 6,
+        background: '#F9FAFB', cursor: onClick ? 'pointer' : 'default',
+        border: onClick ? '1px solid #E5E7EB' : '1px solid transparent',
+      }}
+    >
       <span style={{ flex: 1, color: '#111827', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{left}</span>
       <span style={{ color: '#6B7280' }}>{mid}</span>
       {right && <span style={{ fontWeight: 700, color: '#0D6E6F' }}>{right}</span>}
       {date && <span style={{ color: '#9CA3AF', fontSize: 11 }}>{fmtDate(date)}</span>}
+    </div>
+  )
+}
+function DetailRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, fontSize: 13 }}>
+      <span style={{ flex: '0 0 96px', fontSize: 11, fontWeight: 700, color: '#9CA3AF', textTransform: 'uppercase', letterSpacing: '0.04em' }}>{label}</span>
+      {/* pre-wrap : les soumissions importées de QuickBooks ont une description multi-lignes dans service_type */}
+      <span style={{ flex: 1, color: '#374151', wordBreak: 'break-word', whiteSpace: 'pre-wrap' }}>{value}</span>
     </div>
   )
 }

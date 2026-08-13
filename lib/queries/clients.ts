@@ -46,6 +46,24 @@ export async function getClientHistory(clientId: string): Promise<ClientHistory>
   }
 }
 
+// Autocomplétion par nom (champ « client » du calendrier, etc.).
+export async function searchClients(term: string, limit = 8): Promise<Client[]> {
+  const q = term.trim()
+  if (q.length < 2) return []
+  const { data } = await supabase
+    .from('clients')
+    .select(COLS)
+    .ilike('name', `%${q}%`)
+    .order('name', { ascending: true })
+    .limit(limit)
+  return (data as Client[]) ?? []
+}
+
+// Adresse complète sur une ligne (client → champ adresse d'un job).
+export function fullAddress(c: Pick<Client, 'address' | 'city' | 'postal_code'>): string {
+  return [c.address, c.city, c.postal_code].filter(Boolean).join(', ')
+}
+
 // Retrouve le client rattaché à un lead : par client_id si posé (trigger D2D),
 // sinon par numéro de téléphone (match sur les 10 derniers chiffres).
 export async function findClientForLead(

@@ -1,7 +1,8 @@
 'use client'
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { createJob, updateJob, deleteJob, clientName, type Job, type JobInput, type AssignProfile } from '@/lib/queries/calendar'
+import { searchClients, fullAddress, type Client } from '@/lib/queries/clients'
 import { GAZON_ROUTES, findRoute, routeLabel } from '@/lib/gazon-routes'
 import type { Lane } from './WeekCalendar'
 import JobExtras from './JobExtras'
@@ -62,6 +63,43 @@ export default function JobModal({ kind, canEdit = true, userId = null, lanes, a
 
   const isGazon = kind === 'paysagement' && type === 'gazon'
 
+  // --- autocomplétion client (fenêtres + projets) : taper un nom existant
+  // remplit adresse / téléphone / courriel et rattache le job au client.
+  const [clientId, setClientId] = useState<string | null>(job?.client_id ?? null)
+  const [suggestions, setSuggestions] = useState<Client[]>([])
+  const [showSug, setShowSug] = useState(false)
+  const skipSearch = useRef(false) // évite de rouvrir la liste juste après un choix
+
+  useEffect(() => {
+    if (isGazon) return
+    if (skipSearch.current) { skipSearch.current = false; return }
+    const term = title.trim()
+    if (term.length < 2) { setSuggestions([]); return }
+    let cancelled = false
+    const t = setTimeout(async () => {
+      const list = await searchClients(term)
+      if (!cancelled) { setSuggestions(list); setShowSug(true) }
+    }, 200)
+    return () => { cancelled = true; clearTimeout(t) }
+  }, [title, isGazon])
+
+  const pickClient = (c: Client) => {
+    skipSearch.current = true
+    setClientId(c.id)
+    setTitle(c.name)
+    setAddress(fullAddress(c))
+    setClientPhone(c.phone ?? '')
+    setClientEmail(c.email ?? '')
+    setShowSug(false)
+    setSuggestions([])
+  }
+
+  const onTitleChange = (v: string) => {
+    skipSearch.current = false
+    setTitle(v)
+    setClientId(null) // saisie manuelle = nouveau nom, plus de client rattaché
+  }
+
   const toggleAssign = (id: string) =>
     setAssigned((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]))
 
@@ -85,6 +123,7 @@ export default function JobModal({ kind, canEdit = true, userId = null, lanes, a
       status,
       price: isGazon ? null : (price ? Number(price) : null),
       notes: notes || null,
+      client_id: isGazon ? null : clientId,
     }
     // colonnes récentes : omises si vides pour tolérer une migration pas encore appliquée
     if (!isGazon && (clientPhone.trim() || clientEmail.trim() || job?.client_phone != null || job?.client_email != null)) {
@@ -149,7 +188,43 @@ export default function JobModal({ kind, canEdit = true, userId = null, lanes, a
           ) : (
             <>
               <Field label={kind === 'fenetre' ? 'Client / job *' : 'Nom du job *'}>
-                <input value={title} onChange={(e) => setTitle(e.target.value)} style={inp} autoFocus placeholder={kind === 'fenetre' ? 'Famille Tremblay' : 'Aménagement pavé uni'} />
+                <div style={{ position: 'relative' }}>
+                  <input
+                    value={title}
+                    onChange={(e) => onTitleChange(e.target.value)}
+                    onFocus={() => suggestions.length && setShowSug(true)}
+                    onBlur={() => setTimeout(() => setShowSug(false), 150)}
+                    style={inp}
+                    autoFocus
+                    autoComplete="off"
+                    placeholder={kind === 'fenetre' ? 'Famille Tremblay' : 'Aménagement pavé uni'}
+                  />
+                  {clientId && (
+                    <span style={{ position: 'absolute', right: 8, top: 9, fontSize: 10, fontWeight: 800, color: '#0E6B6E', background: '#69C9CA1F', padding: '2px 7px', borderRadius: 999 }}>CLIENT</span>
+                  )}
+                  {showSug && suggestions.length > 0 && (
+                    <div style={{
+                      position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 5, marginTop: 4,
+                      background: '#FFF', border: '1px solid #E5E7EB', borderRadius: 10, overflow: 'hidden',
+                      boxShadow: '0 8px 20px rgba(0,0,0,0.10)', maxHeight: 200, overflowY: 'auto',
+                    }}>
+                      {suggestions.map((c) => (
+                        <button
+                          key={c.id}
+                          type="button"
+                          onMouseDown={(e) => e.preventDefault()} /* garde le focus le temps du clic */
+                          onClick={() => pickClient(c)}
+                          style={{ display: 'block', width: '100%', textAlign: 'left', padding: '8px 10px', border: 'none', borderTop: '1px solid #F3F4F6', background: '#FFF', cursor: 'pointer' }}
+                        >
+                          <div style={{ fontSize: 13, fontWeight: 600, color: '#111827' }}>{c.name}</div>
+                          {(fullAddress(c) || c.phone) && (
+                            <div style={{ fontSize: 11, color: '#6B7280' }}>{[fullAddress(c), c.phone].filter(Boolean).join(' · ')}</div>
+                          )}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </Field>
 
               <Field label="Service"><input value={service} onChange={(e) => setService(e.target.value)} style={inp} placeholder={kind === 'fenetre' ? 'Lavage ext.' : 'Pavé + plate-bandes'} /></Field>
@@ -241,7 +316,7 @@ export default function JobModal({ kind, canEdit = true, userId = null, lanes, a
         </fieldset>
 
         {/* photos + dépenses : hors fieldset — les employés y ont accès même en lecture seule */}
-        {isEdit && <JobExtras jobId={job!.id} userId={userId} isAdmin={canEdit} />}
+        {isEdit && <JobExtras jobId={job!.id} userId={userId} isAdmin={canEdit} showPhotos={!isGazon} />}
 
         <div style={{ display: 'flex', gap: 8, marginTop: 18, alignItems: 'center' }}>
           {ro ? (

@@ -55,6 +55,12 @@ export async function getQuotes(repId?: string): Promise<Quote[]> {
   return (data as Quote[]) ?? []
 }
 
+// Une soumission par id (fiche cliquée depuis l'historique d'un client).
+export async function getQuote(id: string): Promise<Quote | null> {
+  const { data } = await supabase.from('quotes').select(COLS).eq('id', id).maybeSingle()
+  return (data as Quote) ?? null
+}
+
 export interface QuoteInput {
   client_name?: string | null
   client_email?: string | null

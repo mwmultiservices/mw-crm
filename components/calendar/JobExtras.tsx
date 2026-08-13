@@ -19,9 +19,11 @@ interface Props {
   jobId: string
   userId: string | null
   isAdmin: boolean
+  // gazon : les photos vivent sur la fiche du terrain dans Run gazon, pas sur le job
+  showPhotos?: boolean
 }
 
-export default function JobExtras({ jobId, userId, isAdmin }: Props) {
+export default function JobExtras({ jobId, userId, isAdmin, showPhotos = true }: Props) {
   const [photos, setPhotos] = useState<JobPhoto[]>([])
   const [expenses, setExpenses] = useState<JobExpense[]>([])
   const [migrationMissing, setMigrationMissing] = useState(false)
@@ -104,6 +106,7 @@ export default function JobExtras({ jobId, userId, isAdmin }: Props) {
   return (
     <div style={{ marginTop: 14, borderTop: '1px solid #E5E7EB', paddingTop: 12, display: 'flex', flexDirection: 'column', gap: 12 }}>
       {/* --- PHOTOS --- */}
+      {showPhotos && (
       <div>
         <div style={sectionLabel}>Photos du job ({photos.length})</div>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
@@ -125,6 +128,7 @@ export default function JobExtras({ jobId, userId, isAdmin }: Props) {
             onChange={(e) => { const f = e.target.files?.[0]; if (f) addPhoto(f); e.target.value = '' }} />
         </div>
       </div>
+      )}
 
       {/* --- DÉPENSES --- */}
       <div>
