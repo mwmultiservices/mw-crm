@@ -1,5 +1,6 @@
 import { supabase } from '@/lib/supabase'
 import { addWeeks } from '@/lib/payes'
+import { findRoute } from '@/lib/gazon-routes'
 
 // ============================================================
 // Requêtes Calendrier (Phase 4) — table jobs (rendez-vous / créneaux).
@@ -51,6 +52,31 @@ export async function getJobsWeek(types: string[], weekStart: string): Promise<J
     .lt('start_at', endISO)
     .order('start_at', { ascending: true })
   return (data as Job[]) ?? []
+}
+
+// Jobs d'UNE journée assignées à un employé (pointage : il choisit sa job
+// dans son horaire au lieu de la taper). dayISO = YYYY-MM-DD.
+export async function getMyJobsForDay(profileId: string, dayISO: string): Promise<Job[]> {
+  const startISO = new Date(dayISO + 'T00:00:00').toISOString()
+  const end = new Date(dayISO + 'T00:00:00')
+  end.setDate(end.getDate() + 1)
+  const { data } = await supabase
+    .from('jobs')
+    .select(JOB_COLS)
+    .contains('assigned_ids', [profileId])
+    .gte('start_at', startISO)
+    .lt('start_at', end.toISOString())
+    .neq('status', 'canceled')
+    .order('start_at', { ascending: true })
+  return (data as Job[]) ?? []
+}
+
+/** Libellé court d'une job pour le pointage : « 🌿 Route Longueuil » / « Famille Tremblay — Lavage ext. » */
+export function jobLabel(job: Job): string {
+  const route = job.type === 'gazon' ? findRoute(job.route_name) : null
+  if (route) return `🌿 ${route.label}`
+  const base = clientName(job) || job.title || job.service || 'Job'
+  return job.service && base !== job.service ? `${base} — ${job.service}` : base
 }
 
 export function clientName(job: Job): string | null {

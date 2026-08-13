@@ -3,7 +3,7 @@
 // (aplatit NAV_BY_ROLE, dédupliqué par href) — même source, même ordre que le desktop,
 // le bottom-nav défile horizontalement s'il y a plus d'items que l'écran n'en affiche.
 import {
-  Home, Map, BarChart2, KanbanSquare, CalendarDays, Leaf,
+  Home, Map, BarChart2, KanbanSquare, CalendarDays,
   Users, FileText, Wallet, Clock, Database, User, Sprout,
 } from 'lucide-react'
 
@@ -28,7 +28,10 @@ const I = {
   clients:    { href: '/clients',                 label: 'Clients',      Icon: Users as IconType },
   baseD2D:    { href: '/base-de-donnees',         label: 'Base D2D',     Icon: Database as IconType },
   calFen:     { href: '/calendrier/fenetres',     label: 'Fenêtres',     Icon: CalendarDays as IconType },
-  calPays:    { href: '/calendrier/paysagement',  label: 'Paysagement',  Icon: Leaf as IconType },
+  calPays:    { href: '/calendrier/paysagement',  label: 'Paysagement',  Icon: CalendarDays as IconType },
+  // vue employé : le calendrier n'est que SON horaire (cf. CalendarView / groupByTeam)
+  horaireFen: { href: '/calendrier/fenetres',     label: 'Horaire',      Icon: CalendarDays as IconType },
+  horairePays:{ href: '/calendrier/paysagement',  label: 'Horaire',      Icon: CalendarDays as IconType },
   gazon:      { href: '/gazon',                   label: 'Run gazon',    Icon: Sprout as IconType },
   soumissions:{ href: '/soumissions',             label: 'Soumissions',  Icon: FileText as IconType },
   payes:      { href: '/payes',                   label: 'Payes',        Icon: Wallet as IconType },
@@ -59,14 +62,14 @@ export const NAV_BY_ROLE: Record<string, NavSection[]> = {
     { title: 'Compte',    items: [I.profil] },
   ],
   tech: [
-    { title: 'Mon espace', items: [I.calFen, I.pipeline, I.soumissions] },
+    { title: 'Mon espace', items: [I.horaireFen, I.pipeline, I.soumissions] },
     { title: 'Finance',    items: [I.payesPerso] },
     { title: 'Compte',     items: [I.profil] },
   ],
   // pas de /gazon : l'employé ouvre SA run depuis son job au calendrier
   // (« Démarrer la job » → /gazon?route=…), il ne voit pas les autres routes.
   terrain: [
-    { title: 'Mon espace', items: [I.pointage, I.calPays] },
+    { title: 'Mon espace', items: [I.pointage, I.horairePays] },
     { title: 'Finance',    items: [I.payesPerso] },
     { title: 'Compte',     items: [I.profil] },
   ],
@@ -75,7 +78,7 @@ export const NAV_BY_ROLE: Record<string, NavSection[]> = {
 // Items supplémentaires si capacité secondaire paysagement (ex. rep + terrain)
 export const TERRAIN_EXTRA: NavSection = {
   title: 'Paysagement',
-  items: [I.pointage, I.calPays],
+  items: [I.pointage, I.horairePays],
 }
 
 // Items du bottom-nav mobile pour un rôle : tout ce que ce rôle voit dans la
