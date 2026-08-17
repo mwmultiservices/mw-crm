@@ -4,7 +4,7 @@ import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { isManager } from '@/lib/roles'
-import { findRoute, routeOfSecteur, groupKeyOfSecteur } from '@/lib/gazon-routes'
+import { findRoute, routeOfSecteur, groupKeyOfSecteur, fullTerrainAddress } from '@/lib/gazon-routes'
 import { FREQUENCIES, freqOf, freqShort, dueState } from '@/lib/gazon-frequency'
 import { mondayOf, addWeeks, formatWeekLabel } from '@/lib/payes'
 import {
@@ -113,6 +113,7 @@ function GazonRun() {
   const [origin, setOrigin] = useState<string | undefined>(undefined)
   const [optOrder, setOptOrder] = useState<Map<string, number>>(new Map())
   const [optInfo, setOptInfo] = useState<{ distanceMeters: number; durationSeconds: number; chunks: number } | null>(null)
+  const [optSkipped, setOptSkipped] = useState<Set<string>>(new Set()) // adresses non géocodables
   const [optLoading, setOptLoading] = useState(false)
   const [optError, setOptError] = useState<string | null>(null)
 
@@ -276,24 +277,34 @@ function GazonRun() {
     pendingByPosition.some((t) => !optOrder.has(t.id))
 
   useEffect(() => {
-    if (!optimize) { setOptOrder(new Map()); setOptInfo(null); setOptError(null); return }
+    if (!optimize) { setOptOrder(new Map()); setOptInfo(null); setOptError(null); setOptSkipped(new Set()); return }
     if (!needsOptimize) return
     let cancelled = false
     setOptLoading(true); setOptError(null)
-    optimizeRoute(pendingByPosition.map((t) => ({ id: t.id, address: (t.address ?? '').trim() })), origin)
+    optimizeRoute(
+      pendingByPosition.map((t) => ({ id: t.id, address: fullTerrainAddress(t.address, t.secteur) })),
+      origin,
+    )
       .then((r) => {
         if (cancelled) return
         setOptLoading(false)
         if (r.error) {
           setOptError(r.error)
-          setOptOrder(new Map()); setOptInfo(null)
+          setOptOrder(new Map()); setOptInfo(null); setOptSkipped(new Set())
           if (!r.configured) { // pas de clé Google → on retombe sur l'ordre manuel
             localStorage.setItem(OPT_PREF_KEY, '0')
             setOptimize(false)
           }
           return
         }
-        setOptOrder(new Map(r.order.map((id, i) => [id, i])))
+        const ranks = new Map(r.order.map((id, i) => [id, i]))
+        // Adresses que Google n'a pas su géocoder : rang élevé (donc en fin de
+        // liste, dans leur ordre manuel) mais PRÉSENTES dans la map, sinon
+        // `needsOptimize` resterait vrai et rappellerait Google en boucle.
+        const skipped = new Set(r.skipped)
+        pendingByPosition.forEach((t, i) => { if (!ranks.has(t.id)) ranks.set(t.id, 500_000 + i) })
+        setOptOrder(ranks)
+        setOptSkipped(skipped)
         setOptInfo({ distanceMeters: r.distanceMeters, durationSeconds: r.durationSeconds, chunks: r.chunks })
       })
     return () => { cancelled = true }
@@ -427,6 +438,14 @@ function GazonRun() {
       {optError && (
         <div style={{ background: '#FEF2F2', color: '#991B1B', padding: '8px 12px', borderRadius: 10, fontSize: 12, marginBottom: 10 }}>
           Optimisation indisponible — {optError}
+        </div>
+      )}
+
+      {!optError && optSkipped.size > 0 && (
+        <div style={{ background: '#FFFBEB', color: '#92400E', padding: '8px 12px', borderRadius: 10, fontSize: 12, marginBottom: 10 }}>
+          {optSkipped.size === 1 ? 'Adresse introuvable par Google' : `${optSkipped.size} adresses introuvables par Google`} —{' '}
+          {terrains.filter((t) => optSkipped.has(t.id)).map((t) => t.name).join(', ')}. Laissée{optSkipped.size > 1 ? 's' : ''} en fin de liste :
+          compléter l’adresse (numéro, rue, ville) dans la fiche du terrain.
         </div>
       )}
 

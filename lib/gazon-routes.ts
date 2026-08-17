@@ -53,3 +53,53 @@ export function routeOfSecteur(secteur: string): GazonRoute | null {
 export function groupKeyOfSecteur(secteur: string): string {
   return routeOfSecteur(secteur)?.id ?? secteur
 }
+
+// ============================================================
+// Normalisation des adresses de terrains.
+//
+// Les adresses importées du fichier du client sont partielles (« 1665 av
+// Victoria », sans ville ni province) et parfois bruitées (« 2855 Rue Gélineau
+// (FACTURE) », plages de numéros « 3101-3133-3201 rue du granit »). Google les
+// géocode alors n'importe où sur la planète — et UNE seule adresse irrésoluble
+// fait échouer TOUT l'appel d'optimisation. On complète donc la ville à partir
+// du secteur avant tout envoi à Google (optimisation ET liens Maps).
+// ============================================================
+
+// Ville à ajouter quand l'adresse n'en contient aucune. Chaîne vide = secteur
+// qui couvre plusieurs villes : on ne devine pas (l'adresse doit la porter).
+export const CITY_BY_SECTEUR: Record<string, string> = {
+  'ST-LAMBERT': 'Saint-Lambert',
+  'VIEUX LONGUEUIL': 'Longueuil',
+  'LONGUEUIL': 'Longueuil',
+  'SAINT-HUBERT': 'Saint-Hubert',
+  'CARIGNAN/ST-BRUNO': '',
+  'BOUCHERVILLE': 'Boucherville',
+}
+
+// Villes reconnues comme « déjà présentes » dans une adresse saisie à la main.
+const KNOWN_CITIES = [
+  'saint-lambert', 'st-lambert', 'longueuil', 'saint-hubert', 'st-hubert',
+  'boucherville', 'carignan', 'saint-bruno', 'st-bruno', 'montarville',
+]
+
+const deburr = (s: string) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+
+// Adresse complète et géocodable d'un terrain. Retourne '' si rien à géocoder.
+export function fullTerrainAddress(
+  address: string | null | undefined,
+  secteur: string | null | undefined,
+): string {
+  let a = (address ?? '').trim()
+  if (!a) return ''
+  a = a.replace(/\([^)]*\)/g, ' ')                 // « (FACTURE) », « (bloc) »…
+  a = a.replace(/\s+/g, ' ').replace(/[,\s]+$/, '').trim()
+  a = a.replace(/^(\d+)(?:\s*-\s*\d+)+\b/, '$1')   // « 3101-3133-3201 rue X » → « 3101 rue X »
+  if (!a) return ''
+
+  const flat = deburr(a)
+  const city = CITY_BY_SECTEUR[(secteur ?? '').trim().toUpperCase()] ?? ''
+  if (city && !KNOWN_CITIES.some((c) => flat.includes(c))) a += `, ${city}`
+  if (!/\b(qc|quebec|québec)\b/i.test(a)) a += ', QC'
+  if (!/canada/i.test(a)) a += ', Canada'
+  return a
+}

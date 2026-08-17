@@ -1,5 +1,5 @@
 import { supabase } from '@/lib/supabase'
-import { SHOP_ADDRESS } from '@/lib/gazon-routes'
+import { SHOP_ADDRESS, fullTerrainAddress } from '@/lib/gazon-routes'
 
 // ============================================================
 // Run de gazon — terrains par secteur + suivi hebdo FAIT / À ÉVITER.
@@ -149,8 +149,10 @@ export async function deleteTerrain(id: string): Promise<{ error: string | null 
 }
 
 // GPS vers un terrain (même forme que directionsUrl de clients.ts).
-export function terrainDirectionsUrl(t: Pick<GazonTerrain, 'address'>): string | null {
-  const dest = (t.address ?? '').trim()
+// L'adresse est complétée (ville/province) — brute, « 1665 av Victoria »
+// enverrait le camion n'importe où.
+export function terrainDirectionsUrl(t: Pick<GazonTerrain, 'address' | 'secteur'>): string | null {
+  const dest = fullTerrainAddress(t.address, t.secteur)
   if (!dest) return null
   return `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(dest)}`
 }
@@ -163,8 +165,8 @@ export { SHOP_ADDRESS }
 // TERMINE toujours au shop. L'URL Google Maps accepte ~9 waypoints + 1
 // destination : la destination est le shop, donc au plus 9 terrains
 // (filtrer AVANT : restants à faire).
-export function gazonRouteUrl(terrains: Pick<GazonTerrain, 'address'>[]): string | null {
-  const stops = terrains.map((t) => (t.address ?? '').trim()).filter(Boolean).slice(0, 9)
+export function gazonRouteUrl(terrains: Pick<GazonTerrain, 'address' | 'secteur'>[]): string | null {
+  const stops = terrains.map((t) => fullTerrainAddress(t.address, t.secteur)).filter(Boolean).slice(0, 9)
   if (!stops.length) return null
   let url = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(SHOP_ADDRESS)}&travelmode=driving`
   url += `&waypoints=${stops.map((a) => encodeURIComponent(a)).join('%7C')}`
@@ -235,6 +237,7 @@ export interface OptimizeResult {
   distanceMeters: number
   durationSeconds: number
   chunks: number            // > 1 = optimisé par blocs (limite Google de 25 arrêts)
+  skipped: string[]         // adresses que Google n'a pas su géocoder (laissées en place)
   configured: boolean
   error: string | null
 }
@@ -243,7 +246,7 @@ export async function optimizeRoute(
   stops: { id: string; address: string }[],
   origin?: string,
 ): Promise<OptimizeResult> {
-  const empty = { order: [], distanceMeters: 0, durationSeconds: 0, chunks: 0 }
+  const empty = { order: [], distanceMeters: 0, durationSeconds: 0, chunks: 0, skipped: [] }
   try {
     const res = await fetch('/api/gazon/optimize', {
       method: 'POST',
@@ -259,6 +262,7 @@ export async function optimizeRoute(
       distanceMeters: json.distanceMeters ?? 0,
       durationSeconds: json.durationSeconds ?? 0,
       chunks: json.chunks ?? 1,
+      skipped: json.skipped ?? [],
       configured: true,
       error: null,
     }
