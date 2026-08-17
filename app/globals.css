@@ -61,14 +61,18 @@ html, body {
    La classe n'est PAS posée sur /login ni /legal (ces pages doivent défiler). */
 html.mw-app-locked,
 body.mw-app-locked {
-  height: 100%;
   overflow: hidden;
   overscroll-behavior: none;
 }
+html.mw-app-locked { height: 100%; }
 body.mw-app-locked {
   position: fixed;
   inset: 0;
-  width: 100%;
+  /* `auto` volontaire : c'est `inset` qui donne la hauteur. Avec height:100%,
+     Safari résout le % sur le grand viewport et le bottom-nav finit sous la
+     barre d'outils quand celle-ci est déployée. */
+  height: auto;
+  width: auto;
 }
 
 /* ───────── Shell applicatif (sidebar desktop + bottom-nav mobile) ───────── */
