@@ -85,13 +85,9 @@ export default function AddressSearchModal({ onSelect, onClose }: Props) {
   }
 
   return (
-    <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'flex-end', zIndex: 9999 }}>
+    <div className="mw-sheet-overlay mw-sheet-overlay-abs">
       <style>{`@keyframes mw-spin { to { transform: rotate(360deg); } }`}</style>
-      <div style={{
-        background: '#FFFFFF', width: '100%', borderRadius: '20px 20px 0 0',
-        maxHeight: '80vh', display: 'flex', flexDirection: 'column',
-        fontFamily: 'Inter, sans-serif',
-      }}>
+      <div className="mw-sheet-card" style={{ maxHeight: '80%', display: 'flex', flexDirection: 'column', overflowY: 'hidden' }}>
 
         {/* Handle */}
         <div style={{ display: 'flex', justifyContent: 'center', padding: '12px 0 4px' }}>

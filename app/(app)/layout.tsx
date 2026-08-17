@@ -28,6 +28,18 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   const [unread, setUnread] = useState(0)
   const activeLinkRef = useRef<HTMLAnchorElement>(null)
 
+  // Verrouille le document pendant toute la durée de vie du shell : plus aucun
+  // défilement/rubber-band de la page entière (header et bottom-nav restent figés).
+  // Retiré au démontage pour laisser /login et /legal défiler normalement.
+  useEffect(() => {
+    document.documentElement.classList.add('mw-app-locked')
+    document.body.classList.add('mw-app-locked')
+    return () => {
+      document.documentElement.classList.remove('mw-app-locked')
+      document.body.classList.remove('mw-app-locked')
+    }
+  }, [])
+
   useEffect(() => {
     supabase.auth.getSession().then(async ({ data: { session } }) => {
       if (!session) { router.push('/login'); return }
@@ -88,7 +100,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 
   if (loading || !profile) return (
     <div style={{
-      minHeight: '100vh', background: 'linear-gradient(160deg, #000 0%, #0D1F1F 100%)',
+      height: '100%', minHeight: '100dvh', background: 'linear-gradient(160deg, #000 0%, #0D1F1F 100%)',
       display: 'flex', alignItems: 'center', justifyContent: 'center',
     }}>
       <div style={{ textAlign: 'center' }}>

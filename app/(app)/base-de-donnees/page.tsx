@@ -122,9 +122,9 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 
 function FicheModal({ door, onClose, onEdit }: { door: ClientDoor; onClose: () => void; onEdit: () => void }) {
   return (
-    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 9999, display: 'flex', alignItems: 'flex-end' }} onClick={onClose}>
+    <div className="mw-sheet-overlay" style={{ zIndex: 9999 }} onClick={onClose}>
       <div
-        style={{ background: '#FFFFFF', width: '100%', borderRadius: '16px 16px 0 0', maxHeight: '90vh', overflowY: 'auto', fontFamily: 'Inter, sans-serif' }}
+        className="mw-sheet-card" style={{ borderRadius: '16px 16px 0 0' }}
         onClick={e => e.stopPropagation()}
       >
         {/* Handle */}
@@ -236,9 +236,9 @@ function EditClientModal({ door, onClose, onSaved }: { door: ClientDoor; onClose
   }
 
   return (
-    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 10000, display: 'flex', alignItems: 'flex-end' }} onClick={onClose}>
+    <div className="mw-sheet-overlay" style={{ zIndex: 10000 }} onClick={onClose}>
       <div
-        style={{ background: '#FFFFFF', width: '100%', borderRadius: '20px 20px 0 0', maxHeight: '92vh', overflowY: 'auto', fontFamily: 'Inter, sans-serif' }}
+        className="mw-sheet-card"
         onClick={e => e.stopPropagation()}
       >
         <div style={{ display: 'flex', justifyContent: 'center', padding: '12px 0 4px' }}>
@@ -347,9 +347,9 @@ function AddClientModal({ onClose, onSaved }: { onClose: () => void; onSaved: ()
   }
 
   return (
-    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 10000, display: 'flex', alignItems: 'flex-end' }} onClick={onClose}>
+    <div className="mw-sheet-overlay" style={{ zIndex: 10000 }} onClick={onClose}>
       <div
-        style={{ background: '#FFFFFF', width: '100%', borderRadius: '20px 20px 0 0', maxHeight: '92vh', overflowY: 'auto', fontFamily: 'Inter, sans-serif' }}
+        className="mw-sheet-card"
         onClick={e => e.stopPropagation()}
       >
         <div style={{ display: 'flex', justifyContent: 'center', padding: '12px 0 4px' }}>

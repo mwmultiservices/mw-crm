@@ -210,11 +210,7 @@ export default function LeadDrawer({ lead, repName, manager, userId, userName, o
       {/* backdrop */}
       <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.35)', zIndex: 40 }} />
       {/* panneau */}
-      <aside style={{
-        position: 'fixed', top: 0, right: 0, bottom: 0, width: 'min(440px, 100vw)',
-        background: '#FFFFFF', zIndex: 50, display: 'flex', flexDirection: 'column',
-        boxShadow: '-4px 0 24px rgba(0,0,0,0.12)', fontFamily: 'Inter, sans-serif',
-      }}>
+      <aside className="mw-drawer" style={{ width: 'min(440px, 100vw)' }}>
         {/* en-tête */}
         <div style={{ padding: '16px 16px 0', borderBottom: '1px solid #E5E7EB' }}>
           <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 }}>

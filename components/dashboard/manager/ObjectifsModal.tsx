@@ -111,11 +111,11 @@ export default function ObjectifsModal({ onClose }: Props) {
 
   return (
     <div
-      style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 1001, display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}
+      className="mw-sheet-overlay" style={{ zIndex: 1001 }}
       onClick={onClose}
     >
       <div
-        style={{ background: '#FFFFFF', borderRadius: '16px 16px 0 0', width: '100%', maxHeight: '85vh', overflowY: 'auto', padding: '20px 16px 40px', fontFamily: 'Inter, sans-serif' }}
+        className="mw-sheet-card" style={{ borderRadius: '16px 16px 0 0', padding: '20px 16px 40px' }}
         onClick={(e) => e.stopPropagation()}
       >
         <style>{SPIN}</style>

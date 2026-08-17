@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { createJob, updateJob, deleteJob, clientName, type Job, type JobInput, type AssignProfile } from '@/lib/queries/calendar'
 import { searchClients, fullAddress, type Client } from '@/lib/queries/clients'
 import { GAZON_ROUTES, findRoute, routeLabel } from '@/lib/gazon-routes'
+import { autoFocusDesktop } from '@/lib/ui'
 import type { Lane, ProfileMini } from './WeekCalendar'
 import JobExtras from './JobExtras'
 import { Trash2, Navigation, Phone, Play } from 'lucide-react'
@@ -159,8 +160,8 @@ export default function JobModal({ kind, canEdit = true, userId = null, lanes, a
   }
 
   return (
-    <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', zIndex: 60, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
-      <div onClick={(e) => e.stopPropagation()} style={{ background: '#FFF', borderRadius: 14, padding: 20, width: 'min(460px, 100%)', maxHeight: '90vh', overflowY: 'auto', fontFamily: 'Inter, sans-serif' }}>
+    <div onClick={onClose} className="mw-modal-overlay">
+      <div onClick={(e) => e.stopPropagation()} className="mw-modal-card" style={{ width: 'min(460px, 100%)' }}>
         <h2 style={{ fontSize: 18, fontWeight: 700, color: '#111827', margin: '0 0 16px' }}>{ro ? 'Détails du job' : isEdit ? 'Modifier le job' : 'Nouveau job'}</h2>
 
         {/* gazon : ouvre la run filtrée sur CETTE route (l'employé ne voit que la sienne) */}
@@ -200,7 +201,7 @@ export default function JobModal({ kind, canEdit = true, userId = null, lanes, a
           {isGazon ? (
             /* gazon = une route de plusieurs clients : pas de nom, d'adresse ni de prix */
             <Field label="Route *">
-              <select value={routeName} onChange={(e) => setRouteName(e.target.value)} style={inp} autoFocus>
+              <select value={routeName} onChange={(e) => setRouteName(e.target.value)} style={inp} autoFocus={autoFocusDesktop()}>
                 <option value="">— Choisir une route —</option>
                 {GAZON_ROUTES.map((r) => <option key={r.id} value={r.id}>{r.label}</option>)}
               </select>
@@ -215,7 +216,7 @@ export default function JobModal({ kind, canEdit = true, userId = null, lanes, a
                     onFocus={() => suggestions.length && setShowSug(true)}
                     onBlur={() => setTimeout(() => setShowSug(false), 150)}
                     style={inp}
-                    autoFocus
+                    autoFocus={autoFocusDesktop()}
                     autoComplete="off"
                     placeholder={kind === 'fenetre' ? 'Famille Tremblay' : 'Aménagement pavé uni'}
                   />
@@ -359,7 +360,7 @@ export default function JobModal({ kind, canEdit = true, userId = null, lanes, a
         {/* photos + dépenses : hors fieldset — les employés y ont accès même en lecture seule */}
         {isEdit && <JobExtras jobId={job!.id} userId={userId} isAdmin={canEdit} showPhotos={!isGazon} />}
 
-        <div style={{ display: 'flex', gap: 8, marginTop: 18, alignItems: 'center' }}>
+        <div className="mw-modal-actions">
           {ro ? (
             <button onClick={onClose} style={{ ...primaryBtn, flex: 1 }}>Fermer</button>
           ) : (

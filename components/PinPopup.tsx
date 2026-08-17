@@ -28,8 +28,8 @@ export default function PinPopup({ door, onClose }: { door: any; onClose: () => 
   const dateStr = date.toLocaleDateString('fr-CA') + ' à ' + date.toLocaleTimeString('fr-CA', { hour: '2-digit', minute: '2-digit' })
 
   return (
-    <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'flex-end', zIndex: 9999 }}>
-      <div style={{ background: '#FFFFFF', width: '100%', borderRadius: '20px 20px 0 0', maxHeight: '70vh', overflowY: 'auto', fontFamily: 'Inter, sans-serif' }}>
+    <div className="mw-sheet-overlay mw-sheet-overlay-abs">
+      <div className="mw-sheet-card" style={{ maxHeight: '70%' }}>
 
         {/* Handle */}
         <div style={{ display: 'flex', justifyContent: 'center', padding: '12px 0 4px' }}>

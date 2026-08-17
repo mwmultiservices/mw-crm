@@ -494,7 +494,7 @@ export default function DoorForm({ coords, onSave, onClose, mode = 'create', ini
   )
 
   return (
-    <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'flex-end', zIndex: 9999 }}>
+    <div className="mw-sheet-overlay mw-sheet-overlay-abs">
       <style>{`
         @keyframes mw-client-in { from { opacity:0; transform:translateY(-6px); } to { opacity:1; transform:translateY(0); } }
         @keyframes mw-spin { to { transform: rotate(360deg) } }
@@ -503,7 +503,7 @@ export default function DoorForm({ coords, onSave, onClose, mode = 'create', ini
           50% { box-shadow: 0 0 0 12px rgba(239,68,68,0); }
         }
       `}</style>
-      <div style={{ background: '#FFFFFF', width: '100%', borderRadius: '20px 20px 0 0', maxHeight: '92vh', overflowY: 'auto', fontFamily: 'Inter, sans-serif' }}>
+      <div className="mw-sheet-card">
 
         {/* Handle */}
         <div style={{ display: 'flex', justifyContent: 'center', padding: '12px 0 4px' }}>

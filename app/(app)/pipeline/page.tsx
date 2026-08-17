@@ -8,6 +8,7 @@ import {
 import LeadDrawer from '@/components/pipeline/LeadDrawer'
 import PushToggle from '@/components/PushToggle'
 import { Plus, KanbanSquare } from 'lucide-react'
+import { autoFocusDesktop } from '@/lib/ui'
 
 const money = (n: number) =>
   new Intl.NumberFormat('fr-CA', { style: 'currency', currency: 'CAD', maximumFractionDigits: 0 }).format(n)
@@ -261,11 +262,11 @@ function NewLeadModal({
   }
 
   return (
-    <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', zIndex: 60, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
-      <div onClick={(e) => e.stopPropagation()} style={{ background: '#FFF', borderRadius: 14, padding: 20, width: 'min(420px, 100%)', fontFamily: 'Inter, sans-serif' }}>
+    <div onClick={onClose} className="mw-modal-overlay">
+      <div onClick={(e) => e.stopPropagation()} className="mw-modal-card" style={{ width: 'min(420px, 100%)' }}>
         <h2 style={{ fontSize: 18, fontWeight: 700, color: '#111827', margin: '0 0 16px' }}>Nouveau lead</h2>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-          <Field label="Nom *"><input value={name} onChange={(e) => setName(e.target.value)} style={inp} autoFocus /></Field>
+          <Field label="Nom *"><input value={name} onChange={(e) => setName(e.target.value)} style={inp} autoFocus={autoFocusDesktop()} /></Field>
           <Field label="Téléphone"><input value={phone} onChange={(e) => setPhone(e.target.value)} style={inp} placeholder="819-555-0000" /></Field>
           <Field label="Service"><input value={service} onChange={(e) => setService(e.target.value)} style={inp} placeholder="Lavage de fenêtres ext." /></Field>
           <div style={{ display: 'flex', gap: 10 }}>
@@ -301,7 +302,7 @@ function NewLeadModal({
           )}
           {error && <div style={{ color: '#991B1B', fontSize: 13 }}>{error}</div>}
         </div>
-        <div style={{ display: 'flex', gap: 8, marginTop: 18 }}>
+        <div className="mw-modal-actions">
           <button onClick={onClose} style={{ ...primaryBtn, background: '#F3F4F6', color: '#374151', flex: 1, justifyContent: 'center' }}>Annuler</button>
           <button onClick={save} disabled={saving} style={{ ...primaryBtn, flex: 1, justifyContent: 'center', opacity: saving ? 0.6 : 1 }}>{saving ? 'Enregistrement…' : 'Créer'}</button>
         </div>

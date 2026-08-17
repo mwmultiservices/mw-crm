@@ -15,6 +15,7 @@ import {
   type GazonTerrain, type GazonPassage, type GazonTerrainInput, type GazonNote,
 } from '@/lib/queries/gazon'
 import { uploadPhoto, photoUrl, deletePhoto } from '@/lib/storage'
+import { autoFocusDesktop } from '@/lib/ui'
 import {
   ChevronLeft, ChevronRight, ChevronDown, Plus, Navigation, Phone, Camera,
   Check, AlertTriangle, X, Trash2, Route, Table2, ListChecks, ArrowLeft,
@@ -869,7 +870,7 @@ function NoteModal({ terrain, day, notes, userId, admin, tableMissing, onClose, 
       )}
 
       <textarea
-        value={text} onChange={(e) => setText(e.target.value)} autoFocus
+        value={text} onChange={(e) => setText(e.target.value)} autoFocus={autoFocusDesktop()}
         placeholder="Ex. : barrière barrée, chien dans la cour, gazon très long, bordure à refaire…"
         style={{ ...inp, minHeight: 90, resize: 'vertical' }}
       />
@@ -1108,7 +1109,7 @@ function TerrainModal({ terrain, secteurs, admin, onClose, onSaved }: {
   return (
     <Modal onClose={onClose} title={isEdit ? terrain!.name : 'Nouveau terrain'}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-        <Field label="Nom du client *"><input value={name} onChange={(e) => setName(e.target.value)} style={inp} autoFocus={!isEdit} /></Field>
+        <Field label="Nom du client *"><input value={name} onChange={(e) => setName(e.target.value)} style={inp} autoFocus={!isEdit && autoFocusDesktop()} /></Field>
 
         <div style={{ display: 'flex', gap: 10 }}>
           <Field label="Secteur (route)" flex>
@@ -1194,7 +1195,7 @@ function TerrainModal({ terrain, secteurs, admin, onClose, onSaved }: {
         {error && <div style={{ color: '#991B1B', fontSize: 13 }}>{error}</div>}
       </div>
 
-      <div style={{ display: 'flex', gap: 8, marginTop: 18, alignItems: 'center' }}>
+      <div className="mw-modal-actions">
         {isEdit && admin && (
           <button onClick={remove} disabled={saving} aria-label="Supprimer" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 40, height: 40, borderRadius: 10, border: '1px solid #FCA5A5', background: '#FEF2F2', color: '#DC2626', cursor: 'pointer' }}>
             <Trash2 size={17} />
@@ -1214,8 +1215,8 @@ const page: React.CSSProperties = { fontFamily: 'Inter, sans-serif', maxWidth: 9
 
 function Modal({ title, children, onClose, wide }: { title: string; children: React.ReactNode; onClose: () => void; wide?: boolean }) {
   return (
-    <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', zIndex: 60, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
-      <div onClick={(e) => e.stopPropagation()} style={{ background: '#FFF', borderRadius: 14, padding: 20, width: `min(${wide ? 620 : 480}px, 100%)`, maxHeight: '90vh', overflowY: 'auto', fontFamily: 'Inter, sans-serif' }}>
+    <div onClick={onClose} className="mw-modal-overlay">
+      <div onClick={(e) => e.stopPropagation()} className="mw-modal-card" style={{ width: `min(${wide ? 620 : 480}px, 100%)` }}>
         <h2 style={{ fontSize: 18, fontWeight: 700, color: '#111827', margin: '0 0 16px' }}>{title}</h2>
         {children}
       </div>

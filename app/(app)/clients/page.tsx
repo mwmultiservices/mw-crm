@@ -10,6 +10,7 @@ import {
 } from '@/lib/queries/clients'
 import { getQuote, STATUS_BY_ID, CATEGORY_LABELS, type Quote } from '@/lib/queries/soumissions'
 import { Plus, Search, Users, Navigation, Phone, Mail, MapPin, X, Trash2, Pencil, RefreshCw } from 'lucide-react'
+import { autoFocusDesktop } from '@/lib/ui'
 
 const SERVICE_LABELS: Record<string, string> = { fenetre: 'Fenêtres', paysagement: 'Paysagement', projet: 'Projet' }
 const SERVICE_COLORS: Record<string, string> = { fenetre: '#69C9CA', paysagement: '#697035', projet: '#8D5D36' }
@@ -183,7 +184,7 @@ function ClientDrawer({ client, canDelete, onClose, onEdit, onDeleted }: {
   return (
     <>
       <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.35)', zIndex: 40 }} />
-      <aside style={{ position: 'fixed', top: 0, right: 0, bottom: 0, width: 'min(440px, 100vw)', background: '#FFF', zIndex: 50, display: 'flex', flexDirection: 'column', boxShadow: '-4px 0 24px rgba(0,0,0,0.12)', fontFamily: 'Inter, sans-serif' }}>
+      <aside className="mw-drawer" style={{ width: 'min(440px, 100vw)' }}>
         <div style={{ padding: 16, borderBottom: '1px solid #E5E7EB' }}>
           <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 }}>
             <div style={{ fontSize: 20, fontWeight: 700, color: '#111827' }}>{client.name}</div>
@@ -275,8 +276,8 @@ function QuoteDetailModal({ quoteId, onClose }: { quoteId: string; onClose: () =
   const st = quote ? STATUS_BY_ID[quote.status] : null
 
   return (
-    <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', zIndex: 60, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
-      <div onClick={(e) => e.stopPropagation()} style={{ background: '#FFF', borderRadius: 14, padding: 20, width: 'min(420px, 100%)', maxHeight: '90vh', overflowY: 'auto', fontFamily: 'Inter, sans-serif' }}>
+    <div onClick={onClose} className="mw-modal-overlay">
+      <div onClick={(e) => e.stopPropagation()} className="mw-modal-card" style={{ width: 'min(420px, 100%)' }}>
         {loading ? (
           <div style={{ padding: 20, textAlign: 'center', color: '#9CA3AF', fontSize: 13 }}>Chargement…</div>
         ) : !quote ? (
@@ -358,11 +359,11 @@ function ClientModal({ client, onClose, onSaved }: { client: Client | null; onCl
   }
 
   return (
-    <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', zIndex: 60, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
-      <div onClick={(e) => e.stopPropagation()} style={{ background: '#FFF', borderRadius: 14, padding: 20, width: 'min(460px, 100%)', maxHeight: '90vh', overflowY: 'auto', fontFamily: 'Inter, sans-serif' }}>
+    <div onClick={onClose} className="mw-modal-overlay">
+      <div onClick={(e) => e.stopPropagation()} className="mw-modal-card" style={{ width: 'min(460px, 100%)' }}>
         <h2 style={{ fontSize: 18, fontWeight: 700, color: '#111827', margin: '0 0 16px' }}>{isEdit ? 'Modifier le client' : 'Nouveau client'}</h2>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-          <Field label="Nom *"><input value={name} onChange={(e) => setName(e.target.value)} style={inp} autoFocus /></Field>
+          <Field label="Nom *"><input value={name} onChange={(e) => setName(e.target.value)} style={inp} autoFocus={autoFocusDesktop()} /></Field>
           <Field label="Adresse"><input value={address} onChange={(e) => setAddress(e.target.value)} style={inp} placeholder="245 rue des Pins" /></Field>
           <div style={{ display: 'flex', gap: 10 }}>
             <Field label="Ville" flex><input value={city} onChange={(e) => setCity(e.target.value)} style={inp} /></Field>
@@ -393,7 +394,7 @@ function ClientModal({ client, onClose, onSaved }: { client: Client | null; onCl
           <Field label="Notes"><textarea value={notes} onChange={(e) => setNotes(e.target.value)} style={{ ...inp, minHeight: 54, resize: 'vertical' }} /></Field>
           {error && <div style={{ color: '#991B1B', fontSize: 13 }}>{error}</div>}
         </div>
-        <div style={{ display: 'flex', gap: 8, marginTop: 18 }}>
+        <div className="mw-modal-actions">
           <button onClick={onClose} style={{ ...primaryBtn, background: '#F3F4F6', color: '#374151', flex: 1, justifyContent: 'center' }}>Annuler</button>
           <button onClick={save} disabled={saving} style={{ ...primaryBtn, flex: 1, justifyContent: 'center', opacity: saving ? 0.6 : 1 }}>{saving ? '…' : isEdit ? 'Enregistrer' : 'Créer'}</button>
         </div>

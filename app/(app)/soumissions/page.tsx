@@ -8,6 +8,7 @@ import {
   QUOTE_STATUSES, STATUS_BY_ID, CATEGORY_LABELS, type Quote,
 } from '@/lib/queries/soumissions'
 import { Plus, FileText, ArrowRight, Trash2 } from 'lucide-react'
+import { autoFocusDesktop } from '@/lib/ui'
 
 interface Profile { id: string; full_name: string | null }
 
@@ -344,8 +345,8 @@ function QuoteModal({
   }
 
   return (
-    <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', zIndex: 60, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
-      <div onClick={(e) => e.stopPropagation()} style={{ background: '#FFF', borderRadius: 14, padding: 20, width: 'min(440px, 100%)', maxHeight: '90vh', overflowY: 'auto', fontFamily: 'Inter, sans-serif' }}>
+    <div onClick={onClose} className="mw-modal-overlay">
+      <div onClick={(e) => e.stopPropagation()} className="mw-modal-card" style={{ width: 'min(440px, 100%)' }}>
         <h2 style={{ fontSize: 18, fontWeight: 700, color: '#111827', margin: '0 0 16px' }}>{isEdit ? 'Modifier' : 'Nouvelle soumission'}</h2>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
           <Field label="Type">
@@ -359,7 +360,7 @@ function QuoteModal({
               ))}
             </div>
           </Field>
-          <Field label="Client *"><input value={clientName} onChange={(e) => setClientName(e.target.value)} style={inp} autoFocus placeholder="Famille Tremblay" /></Field>
+          <Field label="Client *"><input value={clientName} onChange={(e) => setClientName(e.target.value)} style={inp} autoFocus={autoFocusDesktop()} placeholder="Famille Tremblay" /></Field>
           <Field label="Courriel client (pour QuickBooks)"><input value={clientEmail} onChange={(e) => setClientEmail(e.target.value)} style={inp} type="email" autoCapitalize="none" placeholder="client@exemple.com" /></Field>
           <Field label="Service"><input value={serviceType} onChange={(e) => setServiceType(e.target.value)} style={inp} placeholder="Lavage fenêtres ext." /></Field>
           <div style={{ display: 'flex', gap: 10 }}>
@@ -416,7 +417,7 @@ function QuoteModal({
           </div>
         )}
 
-        <div style={{ display: 'flex', gap: 8, marginTop: 18, alignItems: 'center' }}>
+        <div className="mw-modal-actions">
           {isEdit && (
             <button onClick={remove} disabled={saving} aria-label="Supprimer" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 40, height: 40, borderRadius: 10, border: '1px solid #FCA5A5', background: '#FEF2F2', color: '#DC2626', cursor: 'pointer' }}><Trash2 size={17} /></button>
           )}

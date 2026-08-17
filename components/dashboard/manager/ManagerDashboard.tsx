@@ -1064,8 +1064,8 @@ export default function ManagerDashboard() {
         const door = allDoors.find((d) => d.id === confirmDeleteId)
         if (!door) return null
         return (
-          <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 10000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
-            <div style={{ background: '#FFFFFF', borderRadius: 12, padding: 24, maxWidth: 320, width: '100%', boxShadow: '0 20px 60px rgba(0,0,0,0.3)', fontFamily: 'Inter, sans-serif' }}>
+          <div className="mw-modal-overlay" style={{ zIndex: 10000 }}>
+            <div className="mw-modal-card" style={{ borderRadius: 12, padding: 24, maxWidth: 320, width: '100%', boxShadow: '0 20px 60px rgba(0,0,0,0.3)' }}>
               <h3 style={{ color: '#111827', fontWeight: 700, fontSize: 16, margin: '0 0 8px' }}>Supprimer cette porte ?</h3>
               <p style={{ color: '#6B7280', fontSize: 13, margin: '0 0 8px' }}>{door.address || door.client_name || '—'}</p>
               {door.client_name && (
@@ -1100,9 +1100,9 @@ export default function ManagerDashboard() {
 
       {/* VendeurDetail Modal */}
       {selectedVendeur && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 1000, display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}
+        <div className="mw-sheet-overlay" style={{ zIndex: 1000 }}
           onClick={() => setSelectedVendeur(null)}>
-          <div style={{ background: '#FFFFFF', borderRadius: '16px 16px 0 0', width: '100%', maxHeight: '85vh', overflowY: 'auto', padding: '20px 16px 40px', fontFamily: 'Inter, sans-serif' }}
+          <div className="mw-sheet-card" style={{ borderRadius: '16px 16px 0 0', padding: '20px 16px 40px' }}
             onClick={(e) => e.stopPropagation()}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20 }}>
               <div style={{ width: 48, height: 48, borderRadius: 12, background: selectedVendeur.color || '#69C9CA', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#FFF', fontWeight: 700, fontSize: 16, flexShrink: 0 }}>
