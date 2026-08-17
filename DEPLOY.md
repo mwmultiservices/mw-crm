@@ -19,6 +19,7 @@ La dernière, **`migration_crm_security.sql`**, est obligatoire avant la prod (a
 | `TWILIO_ACCOUNT_SID` / `TWILIO_AUTH_TOKEN` / `TWILIO_PHONE_NUMBER` | ⬜ | SMS réels (sinon mode stub) |
 | `LEADS_WEBHOOK_SECRET` | ⬜ | protège `/api/leads` (header `x-webhook-secret`) |
 | `QUICKBOOKS_*` | ⬜ | Phase 7 (soumissions) |
+| `GOOGLE_MAPS_API_KEY` | ⬜ | switch « Optimiser » de la run de gazon (Routes API). Sans elle, la run garde l'ordre manuel |
 
 > `NEXT_PUBLIC_*` = exposées au client. Les autres restent serveur uniquement.
 

@@ -6,6 +6,10 @@
 // via ?route=<id> (l'employé ne voit QUE sa route).
 // ============================================================
 
+// Shop MW Multiservices — point d'ARRIVÉE de tous les itinéraires de gazon.
+// Vit ici (module sans dépendance) pour être utilisable côté serveur aussi.
+export const SHOP_ADDRESS = '6350 Ch. de la Savane, Saint-Hubert, QC J3Y 0Z9'
+
 export interface GazonRoute {
   id: string
   label: string
