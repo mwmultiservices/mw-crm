@@ -48,8 +48,17 @@ RETURNS TRIGGER
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public
 AS $$
 BEGIN
-  -- service role (routes admin, scripts) ou admin : tout permis
-  IF auth.role() = 'service_role' OR mw_is_admin() THEN
+  -- Tout permis pour :
+  --   - le service role (routes admin, scripts node)
+  --   - un admin connecté
+  --   - une connexion SQL DIRECTE (SQL Editor, psql, migrations) où
+  --     auth.uid() est NULL.
+  -- Ce dernier cas n'ouvre AUCUNE brèche côté application : la policy
+  -- profiles_update est `TO authenticated USING (id = auth.uid() OR
+  -- mw_is_admin())`, donc avec auth.uid() NULL la RLS rejette la ligne
+  -- avant même d'atteindre ce trigger. Sans cette clause, le seed plus
+  -- bas échoue avec « Champs sensibles réservés à un administrateur ».
+  IF auth.uid() IS NULL OR auth.role() = 'service_role' OR mw_is_admin() THEN
     RETURN NEW;
   END IF;
 
@@ -111,7 +120,14 @@ CREATE POLICY temp_credentials_delete ON temp_credentials
 -- 6. Seed de la grille 2026 (par username, donc rejouable).
 --    Les employés absents de la grille gardent 0 partout et
 --    restent éditables dans Profil → Équipe.
+--
+--    Le trigger est désactivé le temps du seed : il protège les champs
+--    de paye contre l'auto-modification par un EMPLOYÉ, ce qu'une
+--    migration n'est pas. Réactivé juste après, dans la même
+--    transaction — le SQL Editor exécute tout le script d'un bloc,
+--    donc le trigger ne peut pas rester désactivé.
 -- ------------------------------------------------------------
+ALTER TABLE profiles DISABLE TRIGGER trg_protect_profile_fields;
 
 -- PAYSAGEMENT — taux horaire + 13 % sur leurs propres ventes
 UPDATE profiles SET rate_paysagement = 24, pct_vente = 13 WHERE username = 'edouard.dufault';
@@ -137,6 +153,8 @@ UPDATE profiles SET pct_vente = 13 WHERE username IN ('marc.yankov', 'nathan.qui
 
 -- Will Lowe : 13 % de vente + 2 % sur les ventes de CHAQUE vendeur
 UPDATE profiles SET pct_vente = 13, pct_override = 2 WHERE username = 'will.lowe';
+
+ALTER TABLE profiles ENABLE TRIGGER trg_protect_profile_fields;
 
 -- ============================================================
 -- FIN
