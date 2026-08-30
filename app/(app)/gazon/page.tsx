@@ -4,7 +4,7 @@ import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { isManager } from '@/lib/roles'
-import { findRoute, routeOfSecteur, groupKeyOfSecteur, fullTerrainAddress } from '@/lib/gazon-routes'
+import { GAZON_ROUTES, findRoute, routeOfSecteur, groupKeyOfSecteur, fullTerrainAddress } from '@/lib/gazon-routes'
 import { FREQUENCIES, freqOf, freqShort, dueState } from '@/lib/gazon-frequency'
 import { mondayOf, addWeeks, formatWeekLabel } from '@/lib/payes'
 import {
@@ -19,7 +19,7 @@ import { autoFocusDesktop } from '@/lib/ui'
 import {
   ChevronLeft, ChevronRight, ChevronDown, Plus, Navigation, Phone, Camera,
   Check, AlertTriangle, X, Trash2, Route, Table2, ListChecks, ArrowLeft,
-  Sparkles, GripVertical, Pencil, StickyNote, ClipboardList, Loader2,
+  Sparkles, GripVertical, Pencil, StickyNote, ClipboardList, Loader2, Lock,
 } from 'lucide-react'
 
 // Début de saison (1re semaine du fichier du client) — borne gauche du datasheet.
@@ -76,6 +76,21 @@ function contiguousBySecteur(list: GazonTerrain[]): boolean {
     }
   }
   return true
+}
+
+// Regroupe les terrains par run (bloc contigu), en conservant l'ordre
+// d'apparition des runs ET l'ordre relatif à l'intérieur de chacune. Sert de
+// point de départ au mode Édition en vue « Toutes » : chaque run doit former un
+// bloc pour qu'on puisse en sortir/entrer un terrain par glisser-déposer.
+function consolidateByRoute(list: GazonTerrain[]): GazonTerrain[] {
+  const blocks = new Map<string, GazonTerrain[]>()
+  for (const t of list) {
+    const k = groupKeyOfSecteur(t.secteur)
+    const b = blocks.get(k)
+    if (b) b.push(t)
+    else blocks.set(k, [t])
+  }
+  return [...blocks.values()].flat()
 }
 
 // useSearchParams() doit vivre sous une frontière <Suspense> (prerendering Next).
@@ -264,6 +279,22 @@ function GazonRun() {
 
   const retakeIds = useMemo(() => new Set(retakes.map((r) => r.t.id)), [retakes])
 
+  // Terrains déjà tondus un jour ANTÉRIEUR de la semaine : figés dans leur run.
+  // Le passage est comptabilisé au compte de cette run — la sortir de là
+  // fausserait le suivi. Ils restent réordonnables À L'INTÉRIEUR de leur run.
+  const doneBeforeToday = useMemo(() => {
+    const s = new Set<string>()
+    for (const [id, p] of passages) {
+      if (p.status === 'fait' && p.done_at && ymdLocal(new Date(p.done_at)) < today) s.add(id)
+    }
+    return s
+  }, [passages, today])
+
+  // Le mode Édition ne sépare les runs (et n'autorise le transfert entre runs)
+  // qu'en vue « Toutes » : filtré sur une seule run, il n'y a rien à transférer,
+  // et les positions à réattribuer ne couvriraient pas les autres runs.
+  const groupedEdit = !lockedRoute && groupFilter === 'Tous'
+
   // terrains restant à faire, dans l'ORDRE MANUEL — entrée stable de l'optimisation
   const pendingByPosition = useMemo(
     () => visible.filter((t) =>
@@ -344,18 +375,30 @@ function GazonRun() {
   }
 
   // --- mode Édition : réordonner puis Confirmer ---
-  const startEdit = () => { setDraft(ordered); setEditMode(true) }
+  const startEdit = () => { setDraft(groupedEdit ? consolidateByRoute(ordered) : ordered); setEditMode(true) }
 
   const confirmOrder = async () => {
+    // Transferts de run d'abord : glisser un terrain dans une autre run réécrit
+    // son `secteur` (et fige sa ville dans l'adresse, cf. ReorderList).
+    const byId = new Map(terrains.map((t) => [t.id, t]))
+    const moved = draft.filter((t) => {
+      const before = byId.get(t.id)
+      return before && (before.secteur !== t.secteur || before.address !== t.address)
+    })
+
     // On réutilise les positions DÉJÀ occupées par ces terrains, triées : l'ordre
     // relatif des terrains hors sélection (autre route / inactifs) reste intact.
     const slots = draft.map((t) => t.position).sort((a, b) => a - b)
     const updates = draft
       .map((t, i) => ({ id: t.id, position: slots[i] }))
       .filter((u, i) => draft[i].position !== u.position)
-    if (!updates.length) { setEditMode(false); return }
+    if (!updates.length && !moved.length) { setEditMode(false); return }
     setSavingOrder(true)
-    const { error } = await reorderTerrains(updates)
+    for (const t of moved) {
+      const { error } = await updateTerrain(t.id, { secteur: t.secteur, address: t.address })
+      if (error) { setSavingOrder(false); alert(`Impossible de déplacer « ${t.name} » : ${error}`); return }
+    }
+    const { error } = updates.length ? await reorderTerrains(updates) : { error: null as string | null }
     setSavingOrder(false)
     if (error) { alert(`Impossible d'enregistrer l'ordre : ${error}`); return }
     setEditMode(false)
@@ -510,6 +553,7 @@ function GazonRun() {
       {editMode ? (
         <ReorderList
           draft={draft} setDraft={setDraft} saving={savingOrder}
+          grouped={groupedEdit} locked={doneBeforeToday}
           onCancel={() => setEditMode(false)} onConfirm={confirmOrder}
         />
       ) : view === 'datasheet' && admin && !lockedRoute ? (
@@ -708,57 +752,171 @@ function TerrainCard({ t, passage, reason, notDueReason, step, muted, notes, onT
 // ============================================================
 // Mode Édition — drag & drop pour réordonner, puis Confirmer
 // ============================================================
-function ReorderList({ draft, setDraft, saving, onCancel, onConfirm }: {
+function ReorderList({ draft, setDraft, grouped, locked, saving, onCancel, onConfirm }: {
   draft: GazonTerrain[]
   setDraft: (l: GazonTerrain[]) => void
+  grouped: boolean    // vue « Toutes » : un bloc par run + transfert entre runs
+  locked: Set<string> // tondus un jour antérieur → figés dans leur run
   saving: boolean
   onCancel: () => void
   onConfirm: () => void
 }) {
   const dragId = useRef<string | null>(null)
-  const [overId, setOverId] = useState<string | null>(null)
+  const [overId, setOverId] = useState<string | null>(null)       // terrain survolé
+  const [overRoute, setOverRoute] = useState<string | null>(null) // en-tête de run survolé
+  const [refused, setRefused] = useState<string | null>(null)
 
-  const move = (fromId: string, toId: string) => {
-    if (fromId === toId) return
-    const from = draft.findIndex((t) => t.id === fromId)
-    const to = draft.findIndex((t) => t.id === toId)
-    if (from < 0 || to < 0) return
+  // `draft` est CONTIGU par run en mode groupé (consolidateByRoute au départ, et
+  // chaque déplacement préserve la contiguïté) → l'ordre des blocs affichés est
+  // exactement l'ordre de `draft`, celui que Confirmer enregistre.
+  const blocks = useMemo(() => {
+    if (!grouped) return [{ key: '', label: '', items: draft }]
+    const out: { key: string; label: string; items: GazonTerrain[] }[] = []
+    const block = (key: string, label: string) => {
+      let b = out.find((x) => x.key === key)
+      if (!b) { b = { key, label, items: [] }; out.push(b) }
+      return b
+    }
+    for (const t of draft) {
+      const r = routeOfSecteur(t.secteur)
+      block(r?.id ?? t.secteur, r?.label ?? t.secteur).items.push(t)
+    }
+    // Une run vidée doit rester affichée, sinon on ne peut plus rien y remettre.
+    for (const r of GAZON_ROUTES) block(r.id, r.label)
+    return out
+  }, [draft, grouped])
+
+  const rank = useMemo(() => {
+    const m = new Map<string, number>()
+    draft.forEach((t, i) => m.set(t.id, i + 1))
+    return m
+  }, [draft])
+
+  // Secteur à donner au terrain qui entre dans une run : celui de son voisin
+  // d'arrivée (une run couvre 1-2 secteurs, on garde le sous-groupement).
+  const secteurFor = (key: string, neighbour?: GazonTerrain) => {
+    if (neighbour) return neighbour.secteur
+    const items = blocks.find((x) => x.key === key)?.items ?? []
+    if (items.length) return items[items.length - 1].secteur
+    return findRoute(key)?.secteurs[0] ?? key
+  }
+
+  // Déplacement unique. `anchorId` = terrain d'arrivée, cherché dans le brouillon
+  // APRÈS retrait de l'élément déplacé (sinon un déplacement vers le bas décale
+  // l'insertion d'un cran et coupe la run en deux). `after` = juste après lui.
+  const place = (id: string, key: string, anchorId: string | null, after: boolean, neighbour?: GazonTerrain) => {
+    const from = draft.findIndex((t) => t.id === id)
+    if (from < 0) return
+    const t = draft[from]
+    const crossRun = grouped && groupKeyOfSecteur(t.secteur) !== key
+    if (crossRun && locked.has(t.id)) {
+      setRefused(`« ${t.name} » a déjà été tondu un jour précédent — il reste dans sa run cette semaine.`)
+      return
+    }
     const next = [...draft]
-    const [moved] = next.splice(from, 1)
-    next.splice(to, 0, moved)
+    next.splice(from, 1)
+    const anchor = anchorId ? next.findIndex((x) => x.id === anchorId) : -1
+    next.splice(anchor < 0 ? next.length : anchor + (after ? 1 : 0), 0, crossRun
+      // La ville venait du secteur (fullTerrainAddress) : on la FIGE dans
+      // l'adresse avant le transfert, sinon le terrain serait géocodé dans la
+      // ville de sa nouvelle run — à des kilomètres de là.
+      ? { ...t, secteur: secteurFor(key, neighbour), address: fullTerrainAddress(t.address, t.secteur) || t.address }
+      : t)
+    setRefused(null)
     setDraft(next)
+  }
+
+  const dropOnTerrain = (target: GazonTerrain) => {
+    const id = dragId.current
+    if (!id || id === target.id) return
+    // vers le bas → on se pose APRÈS la cible ; vers le haut → AVANT.
+    const down = draft.findIndex((t) => t.id === id) < draft.findIndex((t) => t.id === target.id)
+    place(id, grouped ? groupKeyOfSecteur(target.secteur) : '', target.id, down, target)
+  }
+
+  // Dépôt sur l'en-tête d'une run → à la FIN de cette run.
+  const dropOnRoute = (key: string) => {
+    const id = dragId.current
+    if (!id) return
+    const items = (blocks.find((x) => x.key === key)?.items ?? []).filter((t) => t.id !== id)
+    place(id, key, items[items.length - 1]?.id ?? null, true)
   }
 
   return (
     <div>
-      <div style={{ background: '#EFF6FF', color: '#1E40AF', padding: '10px 12px', borderRadius: 10, fontSize: 13, marginBottom: 10 }}>
+      <div style={{ background: '#EFF6FF', color: '#1E40AF', padding: '10px 12px', borderRadius: 10, fontSize: 13, marginBottom: 10, lineHeight: 1.5 }}>
         Glisse les terrains pour changer l&apos;ordre de passage, puis <strong>Confirmer</strong>.
-        L&apos;ordre est partagé avec toute l&apos;équipe.
+        {grouped && <> Pour <strong>changer un terrain de run</strong>, glisse-le sur un terrain de l&apos;autre run
+          — ou sur son titre pour l&apos;ajouter à la fin.</>}
+        {' '}L&apos;ordre est partagé avec toute l&apos;équipe.
       </div>
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-        {draft.map((t, i) => (
-          <div
-            key={t.id}
-            draggable
-            onDragStart={() => { dragId.current = t.id }}
-            onDragEnd={() => { dragId.current = null; setOverId(null) }}
-            onDragOver={(e) => { e.preventDefault(); setOverId(t.id) }}
-            onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setOverId((v) => (v === t.id ? null : v)) }}
-            onDrop={(e) => { e.preventDefault(); if (dragId.current) move(dragId.current, t.id); setOverId(null) }}
-            style={{
-              display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', borderRadius: 10, cursor: 'grab',
-              background: overId === t.id ? '#F0FDFA' : '#FFF',
-              border: overId === t.id ? `1px dashed ${TEAL}` : '1px solid #E5E7EB',
-            }}
-          >
-            <GripVertical size={16} color="#9CA3AF" style={{ flexShrink: 0 }} />
-            <span style={{ fontSize: 11, fontWeight: 800, color: '#9CA3AF', width: 22, flexShrink: 0 }}>{i + 1}</span>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 14, fontWeight: 700, color: '#111827', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{t.name}</div>
-              <div style={{ fontSize: 11, color: '#9CA3AF', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                {t.secteur}{t.address ? ` · ${t.address}` : ''}
+      {refused && (
+        <div style={{ background: '#FFFBEB', color: '#92400E', padding: '8px 12px', borderRadius: 10, fontSize: 12, marginBottom: 10 }}>
+          {refused}
+        </div>
+      )}
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: grouped ? 18 : 6 }}>
+        {blocks.map((b) => (
+          <div key={b.key || 'flat'}>
+            {grouped && (
+              <div
+                onDragOver={(e) => { e.preventDefault(); setOverRoute(b.key) }}
+                onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setOverRoute((v) => (v === b.key ? null : v)) }}
+                onDrop={(e) => { e.preventDefault(); dropOnRoute(b.key); setOverRoute(null) }}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', marginBottom: 8, borderRadius: 10,
+                  background: overRoute === b.key ? '#F0FDFA' : '#F3F4F6',
+                  border: overRoute === b.key ? `1px dashed ${TEAL}` : '1px solid transparent',
+                }}
+              >
+                <Route size={14} color={GREEN} style={{ flexShrink: 0 }} />
+                <span style={{ fontSize: 12, fontWeight: 800, color: '#374151', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{b.label}</span>
+                <Count n={b.items.length} />
               </div>
+            )}
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {grouped && b.items.length === 0 && (
+                <div
+                  onDragOver={(e) => { e.preventDefault(); setOverRoute(b.key) }}
+                  onDrop={(e) => { e.preventDefault(); dropOnRoute(b.key); setOverRoute(null) }}
+                  style={{ padding: '14px 12px', borderRadius: 10, border: '1px dashed #D1D5DB', textAlign: 'center', fontSize: 12, color: '#9CA3AF' }}
+                >
+                  Glisse un terrain ici
+                </div>
+              )}
+
+              {b.items.map((t) => (
+                <div
+                  key={t.id}
+                  draggable
+                  onDragStart={() => { dragId.current = t.id }}
+                  onDragEnd={() => { dragId.current = null; setOverId(null); setOverRoute(null) }}
+                  onDragOver={(e) => { e.preventDefault(); setOverId(t.id) }}
+                  onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setOverId((v) => (v === t.id ? null : v)) }}
+                  onDrop={(e) => { e.preventDefault(); dropOnTerrain(t); setOverId(null) }}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', borderRadius: 10, cursor: 'grab',
+                    background: overId === t.id ? '#F0FDFA' : '#FFF',
+                    border: overId === t.id ? `1px dashed ${TEAL}` : '1px solid #E5E7EB',
+                  }}
+                >
+                  <GripVertical size={16} color="#9CA3AF" style={{ flexShrink: 0 }} />
+                  <span style={{ fontSize: 11, fontWeight: 800, color: '#9CA3AF', width: 22, flexShrink: 0 }}>{rank.get(t.id)}</span>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 14, fontWeight: 700, color: '#111827', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{t.name}</div>
+                    <div style={{ fontSize: 11, color: '#9CA3AF', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      {t.secteur}{t.address ? ` · ${t.address}` : ''}
+                    </div>
+                  </div>
+                  {grouped && locked.has(t.id) && (
+                    <Lock size={13} color="#9CA3AF" style={{ flexShrink: 0 }}
+                      aria-label="Déjà tondu — ne peut pas changer de run cette semaine" />
+                  )}
+                </div>
+              ))}
             </div>
           </div>
         ))}
