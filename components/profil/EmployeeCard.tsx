@@ -1,10 +1,11 @@
 'use client'
 import { useState } from 'react'
-import { ChevronDown, ChevronUp, Copy, Check, KeyRound, RefreshCw } from 'lucide-react'
+import { ChevronDown, ChevronUp, Copy, Check, KeyRound, RefreshCw, Trash2 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { ROLE_OPTIONS, roleLabel, type Role } from '@/lib/roles'
 import { payRatesOf, hasRates, money2, type PayRates, type PayRateKey } from '@/lib/payes'
 import { generateTempPasswords, type TempCredential } from '@/lib/queries/credentials'
+import { deleteEmployee } from '@/lib/queries/team'
 import ColorPicker from './ColorPicker'
 import PayRatesEditor from './PayRatesEditor'
 
@@ -59,6 +60,7 @@ export default function EmployeeCard({ employee, usedColors, onUpdated, tempPass
   const [error, setError] = useState<string | null>(null)
   const [pwBusy, setPwBusy] = useState(false)
   const [copied, setCopied] = useState(false)
+  const [deleting, setDeleting] = useState(false)
 
   const setRate = (key: PayRateKey, value: number) =>
     setRates((r) => ({ ...r, [key]: value }))
@@ -107,6 +109,22 @@ export default function EmployeeCard({ employee, usedColors, onUpdated, tempPass
       setCopied(true)
       setTimeout(() => setCopied(false), 2000)
     })
+  }
+
+  const remove = async () => {
+    if (!confirm(
+      `Supprimer définitivement le compte de ${employee.full_name} ?\n\n` +
+      '• Il ne pourra plus se connecter.\n' +
+      '• Ses commissions et ses heures de pointage seront effacées.\n' +
+      '• Ses leads, soumissions et jobs restent, mais sans employé assigné.\n\n' +
+      'Cette action est irréversible.',
+    )) return
+    setDeleting(true)
+    setError(null)
+    const r = await deleteEmployee(employee.id)
+    setDeleting(false)
+    if (!r.ok) { setError(r.error ?? 'Suppression impossible'); return }
+    onUpdated()
   }
 
   const commDisplay = hasRates(rates)
@@ -292,6 +310,26 @@ export default function EmployeeCard({ employee, usedColors, onUpdated, tempPass
               </p>
             )}
             <SaveBtn saving={saving} saved={saved} onClick={handleSave} />
+
+            <div style={{ borderTop: '1px solid #F3F4F6', paddingTop: 14 }}>
+              <button
+                onClick={remove}
+                disabled={deleting}
+                style={{
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                  width: '100%', background: '#FFFFFF', color: '#EF4444',
+                  border: '1px solid #FECACA', borderRadius: 8, padding: '10px 12px',
+                  fontSize: 13, fontWeight: 600, cursor: deleting ? 'not-allowed' : 'pointer',
+                  fontFamily: 'Inter, sans-serif',
+                }}
+              >
+                <Trash2 size={14} />
+                {deleting ? 'Suppression…' : 'Supprimer le compte'}
+              </button>
+              <p style={{ color: '#9CA3AF', fontSize: 11, margin: '6px 0 0', textAlign: 'center' }}>
+                Irréversible — efface aussi ses commissions et ses heures.
+              </p>
+            </div>
           </div>
         </div>
       )}

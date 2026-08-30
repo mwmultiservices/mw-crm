@@ -2,7 +2,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { supabase } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
-import { LogOut, Copy, Check, KeyRound } from 'lucide-react'
+import { LogOut, Copy, Check, KeyRound, UserPlus } from 'lucide-react'
 import SettingsSection from '@/components/profil/SettingsSection'
 import EmployeeCard, { Employee } from '@/components/profil/EmployeeCard'
 import ColorPicker from '@/components/profil/ColorPicker'
@@ -10,6 +10,7 @@ import AppSettingsForm from '@/components/profil/AppSettingsForm'
 import MapSettingsForm from '@/components/profil/MapSettingsForm'
 import SaleSettingsForm from '@/components/profil/SaleSettingsForm'
 import PasswordSection from '@/components/profil/PasswordSection'
+import NewEmployeeModal from '@/components/profil/NewEmployeeModal'
 import { getTempPasswords, generateTempPasswords, type TempCredential } from '@/lib/queries/credentials'
 import { payRatesOf, PAY_RATE_FIELDS, money2 } from '@/lib/payes'
 import { isManager } from '@/lib/roles'
@@ -329,6 +330,7 @@ export default function ProfilPage() {
   const [needsMigration, setNeedsMigration] = useState(false)
   const [loading, setLoading]           = useState(true)
   const [managerTab, setManagerTab]     = useState<ManagerTab>('equipe')
+  const [showNewEmployee, setShowNewEmployee] = useState(false)
 
   // Vendeur — phone edit
   const [phone, setPhone]           = useState('')
@@ -435,6 +437,11 @@ export default function ProfilPage() {
     .filter(p => p.id !== profile.id && p.color)
     .map(p => ({ color: p.color as string, name: p.full_name as string }))
 
+  // Pour un NOUVEL employé, la couleur de l'admin compte aussi comme prise.
+  const allUsedColors = allProfiles
+    .filter(p => p.color)
+    .map(p => ({ color: p.color as string, name: p.full_name as string }))
+
   // ── Identity card (shared) ────────────────────────────────
 
   const IdentityCard = () => (
@@ -527,13 +534,27 @@ export default function ProfilPage() {
           {managerTab === 'equipe' && (
             <>
               <div>
-                <p style={{ color: '#374151', fontSize: 12, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', margin: '0 0 10px 2px' }}>
-                  Gestion des employés
-                </p>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '0 0 10px 2px' }}>
+                  <p style={{ color: '#374151', fontSize: 12, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', margin: 0, flex: 1 }}>
+                    Gestion des employés
+                  </p>
+                  <button
+                    onClick={() => setShowNewEmployee(true)}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 6, background: '#69C9CA',
+                      color: '#06363B', border: 'none', borderRadius: 8, padding: '8px 12px',
+                      fontSize: 13, fontWeight: 700, cursor: 'pointer', fontFamily: 'Inter, sans-serif',
+                      flexShrink: 0,
+                    }}
+                  >
+                    <UserPlus size={14} />
+                    Ajouter
+                  </button>
+                </div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                   {vendeurs.length === 0 && (
                     <div style={{ background: '#FFFFFF', borderRadius: 12, border: '1px solid #E5E7EB', padding: '32px 16px', textAlign: 'center', color: '#6B7280', fontSize: 14 }}>
-                      Aucun vendeur
+                      Aucun employé — utilise « Ajouter » pour créer un compte.
                     </div>
                   )}
                   {vendeurs.map((emp: any) => (
@@ -586,6 +607,14 @@ export default function ProfilPage() {
 
           <LogoutBtn />
         </div>
+
+        {showNewEmployee && (
+          <NewEmployeeModal
+            usedColors={allUsedColors}
+            onClose={() => setShowNewEmployee(false)}
+            onCreated={loadData}
+          />
+        )}
       </div>
     )
   }
