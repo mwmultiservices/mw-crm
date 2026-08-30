@@ -1,5 +1,5 @@
 'use client'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import Link from 'next/link'
 import { Navigation, Play } from 'lucide-react'
 import { clientName, jobDirectionsUrl, type Job } from '@/lib/queries/calendar'
@@ -112,12 +112,27 @@ function layout(dayJobs: Job[]): Placed[] {
   return placed
 }
 
-/** minutes du créneau visé à partir de la position du curseur dans la colonne */
-function minutesFromEvent(e: React.MouseEvent | React.DragEvent, el: HTMLElement): number {
+/**
+ * Minutes de DÉBUT du créneau visé à partir de la position du curseur dans la colonne.
+ * `grabMin` = décalage (en minutes) entre le haut de la carte et le point de saisie au
+ * glisser : sans lui, le repère suivrait le curseur (donc le bas de la carte si on l'a
+ * attrapée par le bas) au lieu du haut du job. `durMin` sert à ne pas déborder la grille.
+ */
+function minutesFromEvent(
+  e: React.MouseEvent | React.DragEvent, el: HTMLElement, grabMin = 0, durMin = SNAP,
+): number {
   const y = e.clientY - el.getBoundingClientRect().top
-  const raw = START_HOUR * 60 + (y / HOUR_H) * 60
+  const raw = START_HOUR * 60 + (y / HOUR_H) * 60 - grabMin
   const snapped = Math.round(raw / SNAP) * SNAP
-  return Math.min(Math.max(snapped, START_HOUR * 60), END_HOUR * 60 - SNAP)
+  const max = Math.max(END_HOUR * 60 - Math.max(durMin, SNAP), START_HOUR * 60)
+  return Math.min(Math.max(snapped, START_HOUR * 60), max)
+}
+
+/** durée d'un job en minutes (1 h par défaut si pas de fin) */
+function durationOf(job: Job): number {
+  const s = minutesOf(job.start_at)
+  const e = minutesOf(job.end_at)
+  return s != null && e != null && e > s ? e - s : 60
 }
 
 export default function WeekCalendar({
@@ -128,7 +143,9 @@ export default function WeekCalendar({
   const nowMin = now.getHours() * 60 + now.getMinutes()
   const showNow = nowMin >= START_HOUR * 60 && nowMin <= END_HOUR * 60
   const dnd = canEdit && !!onMoveJob
-  const [dragOver, setDragOver] = useState<{ day: string; lane: string; minutes: number } | null>(null)
+  const [dragOver, setDragOver] = useState<{ day: string; lane: string; minutes: number; dur: number } | null>(null)
+  // point de saisie (offset depuis le haut de la carte) + durée du job en cours de glisser
+  const dragRef = useRef<{ grabMin: number; durMin: number } | null>(null)
 
   const days = Array.from({ length: 7 }, (_, i) => {
     const d = new Date(weekStart + 'T00:00:00')
@@ -138,8 +155,10 @@ export default function WeekCalendar({
 
   const handleDrop = (e: React.DragEvent, dayKey: string, laneId: string) => {
     e.preventDefault()
-    const minutes = minutesFromEvent(e, e.currentTarget as HTMLElement)
+    const d = dragRef.current
+    const minutes = minutesFromEvent(e, e.currentTarget as HTMLElement, d?.grabMin ?? 0, d?.durMin ?? 60)
     setDragOver(null)
+    dragRef.current = null
     const id = e.dataTransfer.getData('text/plain')
     const job = jobs.find((j) => j.id === id)
     if (!job) return
@@ -214,7 +233,12 @@ export default function WeekCalendar({
                 } : undefined}
                 onDragOver={dnd ? (e) => {
                   e.preventDefault()
-                  setDragOver({ day: key, lane: lane.id, minutes: minutesFromEvent(e, e.currentTarget as HTMLElement) })
+                  const d = dragRef.current
+                  const dur = d?.durMin ?? 60
+                  setDragOver({
+                    day: key, lane: lane.id, dur,
+                    minutes: minutesFromEvent(e, e.currentTarget as HTMLElement, d?.grabMin ?? 0, dur),
+                  })
                 } : undefined}
                 onDragLeave={dnd ? (e) => {
                   if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDragOver(null)
@@ -241,7 +265,8 @@ export default function WeekCalendar({
                 {over && dragOver && (
                   <div style={{
                     position: 'absolute', left: 2, right: 2, top: ((dragOver.minutes - START_HOUR * 60) / 60) * HOUR_H,
-                    height: HOUR_H, borderRadius: 6, background: '#F0FDFA', border: `1px dashed ${lane.color}`,
+                    height: Math.max((dragOver.dur / 60) * HOUR_H, 22), overflow: 'hidden',
+                    borderRadius: 6, background: '#F0FDFA', border: `1px dashed ${lane.color}`,
                     fontSize: 10, fontWeight: 700, color: '#0E6B6E', padding: 2, pointerEvents: 'none',
                   }}>
                     {hhmm(dragOver.minutes)}
@@ -263,8 +288,15 @@ export default function WeekCalendar({
                       tabIndex={0}
                       onClick={(e) => { e.stopPropagation(); onJobClick(job) }}
                       draggable={dnd}
-                      onDragStart={dnd ? (e) => { e.dataTransfer.setData('text/plain', job.id); e.dataTransfer.effectAllowed = 'move' } : undefined}
-                      onDragEnd={dnd ? () => setDragOver(null) : undefined}
+                      onDragStart={dnd ? (e) => {
+                        e.dataTransfer.setData('text/plain', job.id)
+                        e.dataTransfer.effectAllowed = 'move'
+                        const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+                        const durMin = durationOf(job)
+                        const grabMin = Math.min(Math.max(((e.clientY - rect.top) / HOUR_H) * 60, 0), durMin)
+                        dragRef.current = { grabMin, durMin }
+                      } : undefined}
+                      onDragEnd={dnd ? () => { setDragOver(null); dragRef.current = null } : undefined}
                       title={`${fmtTime(job.start_at)}${job.end_at ? `–${fmtTime(job.end_at)}` : ''} · ${route ? route.label : (clientName(job) || job.title || job.service || 'Job')}`}
                       style={{
                         position: 'absolute', top, height,
