@@ -1,10 +1,12 @@
 'use client'
 import { useState } from 'react'
-import { ChevronDown, ChevronUp } from 'lucide-react'
+import { ChevronDown, ChevronUp, Copy, Check, KeyRound, RefreshCw } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { ROLE_OPTIONS, roleLabel, type Role } from '@/lib/roles'
+import { payRatesOf, hasRates, money2, type PayRates, type PayRateKey } from '@/lib/payes'
+import { generateTempPasswords, type TempCredential } from '@/lib/queries/credentials'
 import ColorPicker from './ColorPicker'
-import CommissionEditor from './CommissionEditor'
+import PayRatesEditor from './PayRatesEditor'
 
 export interface Employee {
   id: string
@@ -15,12 +17,14 @@ export interface Employee {
   role?: string | null
   commission_type?: string | null
   commission_value?: number | null
+  [key: string]: unknown
 }
 
 interface Props {
   employee: Employee
   usedColors: { color: string; name: string }[]
   onUpdated: () => void
+  tempPassword?: TempCredential | null
 }
 
 const SaveBtn = ({ saving, saved, onClick }: { saving: boolean; saved: boolean; onClick: () => void }) => (
@@ -45,29 +49,42 @@ const SaveBtn = ({ saving, saved, onClick }: { saving: boolean; saved: boolean; 
   </button>
 )
 
-export default function EmployeeCard({ employee, usedColors, onUpdated }: Props) {
+export default function EmployeeCard({ employee, usedColors, onUpdated, tempPassword }: Props) {
   const [expanded, setExpanded] = useState(false)
   const [color, setColor] = useState(employee.color || '#69C9CA')
   const [role, setRole] = useState<string>(employee.role || 'rep')
-  const [commType, setCommType] = useState<'percent' | 'fixed'>(
-    (employee.commission_type as 'percent' | 'fixed') || 'percent'
-  )
-  const [commValue, setCommValue] = useState(employee.commission_value ?? 0)
+  const [rates, setRates] = useState<PayRates>(() => payRatesOf(employee))
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [pwBusy, setPwBusy] = useState(false)
+  const [copied, setCopied] = useState(false)
+
+  const setRate = (key: PayRateKey, value: number) =>
+    setRates((r) => ({ ...r, [key]: value }))
 
   const handleSave = async () => {
     setSaving(true)
     setError(null)
     const { error: err } = await supabase
       .from('profiles')
-      .update({ color, role, commission_type: commType, commission_value: commValue })
+      .update({
+        color, role,
+        ...rates,
+        // compat : l'ancien couple commission_* alimente encore quelques vues
+        commission_type: 'percent',
+        commission_value: rates.pct_vente,
+        hourly_rate: rates.rate_paysagement,
+      })
       .eq('id', employee.id)
     setSaving(false)
     if (err) {
-      // Le trigger protect_profile_fields rejette si l'utilisateur n'est pas admin.
-      setError(err.message || 'Modification refusée')
+      // Colonnes absentes (migration pas appliquée) ou trigger protect_profile_fields.
+      setError(
+        /column|colonne/i.test(err.message)
+          ? `${err.message} — applique migration_crm_salaires.sql dans Supabase → SQL Editor.`
+          : err.message || 'Modification refusée',
+      )
       return
     }
     setSaved(true)
@@ -75,9 +92,29 @@ export default function EmployeeCard({ employee, usedColors, onUpdated }: Props)
     onUpdated()
   }
 
-  const commDisplay = commType === 'percent'
-    ? `${commValue}%`
-    : `${commValue}$/vente`
+  const regenerate = async () => {
+    setPwBusy(true)
+    setError(null)
+    const r = await generateTempPasswords({ profileIds: [employee.id] })
+    setPwBusy(false)
+    if (!r.ok) { setError(r.error ?? 'Génération impossible'); return }
+    onUpdated()
+  }
+
+  const copyPassword = () => {
+    if (!tempPassword) return
+    navigator.clipboard.writeText(tempPassword.password).then(() => {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    })
+  }
+
+  const commDisplay = hasRates(rates)
+    ? [
+        rates.rate_paysagement > 0 ? `${money2(rates.rate_paysagement)}/h` : null,
+        rates.pct_vente > 0 ? `${rates.pct_vente}%` : null,
+      ].filter(Boolean).join(' · ')
+    : 'à définir'
 
   const otherColors = usedColors.filter(u => u.color !== employee.color)
 
@@ -138,6 +175,15 @@ export default function EmployeeCard({ employee, usedColors, onUpdated }: Props)
           }}>
             {commDisplay}
           </span>
+          {tempPassword && (
+            <span title="Mot de passe temporaire actif" style={{
+              display: 'inline-flex', alignItems: 'center', gap: 3,
+              background: '#FEF3C7', color: '#92400E',
+              fontSize: 11, fontWeight: 700, padding: '2px 7px', borderRadius: 999,
+            }}>
+              <KeyRound size={10} />temp
+            </span>
+          )}
           {expanded ? <ChevronUp size={16} color="#9CA3AF" /> : <ChevronDown size={16} color="#9CA3AF" />}
         </div>
       </button>
@@ -175,14 +221,67 @@ export default function EmployeeCard({ employee, usedColors, onUpdated }: Props)
               <ColorPicker selectedColor={color} usedColors={otherColors} onChange={setColor} />
             </div>
             <div>
-              <p style={{ color: '#374151', fontWeight: 600, fontSize: 12, margin: '0 0 10px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                Commission
+              <p style={{ color: '#374151', fontWeight: 600, fontSize: 12, margin: '0 0 4px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                Grille de paye
               </p>
-              <CommissionEditor
-                type={commType}
-                value={commValue}
-                onChange={(t, v) => { setCommType(t); setCommValue(v) }}
-              />
+              <p style={{ color: '#9CA3AF', fontSize: 11, margin: '0 0 12px', lineHeight: 1.45 }}>
+                Laisse à 0 les postes qui ne s&apos;appliquent pas. Ces taux alimentent
+                directement la page Payes selon les jobs faites.
+              </p>
+              <PayRatesEditor rates={rates} onChange={setRate} />
+            </div>
+
+            <div>
+              <p style={{ color: '#374151', fontWeight: 600, fontSize: 12, margin: '0 0 10px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                Mot de passe
+              </p>
+              {tempPassword ? (
+                <div style={{
+                  background: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: 10,
+                  padding: '10px 12px', display: 'flex', alignItems: 'center', gap: 10,
+                }}>
+                  <code style={{
+                    flex: 1, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+                    fontSize: 16, fontWeight: 700, color: '#92400E', letterSpacing: '0.04em',
+                    userSelect: 'all', wordBreak: 'break-all',
+                  }}>
+                    {tempPassword.password}
+                  </code>
+                  <button
+                    onClick={copyPassword}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 5, flexShrink: 0,
+                      background: copied ? '#10B981' : '#F59E0B', color: '#FFF',
+                      border: 'none', borderRadius: 8, padding: '7px 11px',
+                      fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: 'Inter, sans-serif',
+                    }}
+                  >
+                    {copied ? <Check size={13} /> : <Copy size={13} />}
+                    {copied ? 'Copié' : 'Copier'}
+                  </button>
+                </div>
+              ) : (
+                <p style={{
+                  background: '#F0FDF4', border: '1px solid #BBF7D0', borderRadius: 10,
+                  padding: '10px 12px', margin: 0, fontSize: 12, color: '#166534', lineHeight: 1.5,
+                }}>
+                  ✓ Mot de passe personnel — choisi par l&apos;employé, invisible sur le site.
+                </p>
+              )}
+              <button
+                onClick={regenerate}
+                disabled={pwBusy}
+                style={{
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                  width: '100%', marginTop: 8, background: '#FFFFFF', color: '#374151',
+                  border: '1px solid #D1D5DB', borderRadius: 8, padding: '9px 12px',
+                  fontSize: 12, fontWeight: 600, cursor: pwBusy ? 'not-allowed' : 'pointer',
+                  fontFamily: 'Inter, sans-serif',
+                }}
+              >
+                <RefreshCw size={13} />
+                {pwBusy ? 'Génération…' : tempPassword ? 'Générer un nouveau mot de passe' : 'Réinitialiser avec un mot de passe temporaire'}
+              </button>
             </div>
             {error && (
               <p style={{

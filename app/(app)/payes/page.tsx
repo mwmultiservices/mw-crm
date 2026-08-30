@@ -8,7 +8,11 @@ import {
   getMyCommission, getMyTimesheets, getDoneJobs,
   type CommissionRow, type EmployeeHours, type TimesheetRow, type DoneJobRow,
 } from '@/lib/queries/payes'
-import { mondayOf, addWeeks, formatWeekLabel, periodStartOf, formatPeriodLabel, money, money2 } from '@/lib/payes'
+import {
+  mondayOf, addWeeks, formatWeekLabel, periodStartOf, formatPeriodLabel, money, money2,
+  payRatesOf, jobPayFor, hourlyRateFor, PAY_MODE_BY_ID, EMPTY_RATES, WORK_TYPES,
+  type PayRates,
+} from '@/lib/payes'
 import { ChevronLeft, ChevronRight, RefreshCw, Check, Send } from 'lucide-react'
 
 export default function PayesPage() {
@@ -63,6 +67,7 @@ function AdminPayes({ userId }: { userId: string }) {
   const [rawComms, setRawComms] = useState<CommissionRow[]>([])
   const [hours, setHours] = useState<EmployeeHours[]>([])
   const [doneJobs, setDoneJobs] = useState<DoneJobRow[]>([])
+  const [ratesById, setRatesById] = useState<Map<string, PayRates>>(new Map())
   const [loading, setLoading] = useState(true)
   const [computing, setComputing] = useState(false)
   const [sendingSms, setSendingSms] = useState(false)
@@ -74,13 +79,15 @@ function AdminPayes({ userId }: { userId: string }) {
 
   const load = useCallback(async () => {
     setLoading(true)
-    const [cA, cB, hA, hB, dj] = await Promise.all([
+    const [cA, cB, hA, hB, dj, profs] = await Promise.all([
       getCommissions(weekOf),
       period ? getCommissions(weekB) : Promise.resolve([] as CommissionRow[]),
       getTimesheetsWeek(weekOf),
       period ? getTimesheetsWeek(weekB) : Promise.resolve([] as EmployeeHours[]),
       getDoneJobs(weekOf, period ? 2 : 1),
+      supabase.from('profiles').select('*'),
     ])
+    setRatesById(new Map((profs.data ?? []).map((p) => [p.id as string, payRatesOf(p)])))
     setRawComms([...cA, ...cB])
     // fusionne les heures des 2 semaines par employé
     const byId = new Map<string, EmployeeHours>()
@@ -111,7 +118,10 @@ function AdminPayes({ userId }: { userId: string }) {
     const r1 = await computeCommissions(weekOf)
     const r2 = period ? await computeCommissions(weekB) : null
     setComputing(false)
-    setMsg(`Recalculé : ${r1.reps + (r2?.reps ?? 0)} ligne(s) rep, ${r1.techs + (r2?.techs ?? 0)} ligne(s) tech`)
+    setMsg(
+      `Recalculé : ${r1.reps + (r2?.reps ?? 0)} vente(s), ` +
+      `${r1.techs + (r2?.techs ?? 0)} vitres, ${r1.overrides + (r2?.overrides ?? 0)} override`
+    )
     setTimeout(() => setMsg(null), 3000)
     load()
   }
@@ -157,7 +167,8 @@ function AdminPayes({ userId }: { userId: string }) {
   }, [rawComms])
 
   const reps = merged.filter((c) => c.type === 'rep')
-  const techs = merged.filter((c) => c.type === 'tech')
+  const techs = merged.filter((c) => c.type === 'vitres' || c.type === 'tech')
+  const overrides = merged.filter((c) => c.type === 'override')
 
   const totalDue = merged.filter((c) => !c.paid).reduce((s, c) => s + c.commission + c.bonus, 0)
     + hours.filter((h) => !h.paid).reduce((s, h) => s + h.pay, 0)
@@ -245,52 +256,83 @@ function AdminPayes({ userId }: { userId: string }) {
             </Card>
           )}
 
-          <SectionTitle>Techniciens fenêtres (18%)</SectionTitle>
-          {techs.length === 0 ? <Empty text="Aucune commission tech (jobs fenêtres « done » de la période)." /> : (
+          <SectionTitle>Lavage de vitres (% par technicien)</SectionTitle>
+          {techs.length === 0 ? <Empty text="Aucune commission de vitres (jobs « done » de la période)." /> : (
             <Card>
-              <Header cols="1fr 70px 90px 90px 110px" labels={['Employé', 'Jobs', 'Revenu', 'Commission', '']} />
+              <Header cols="1fr 70px 90px 56px 90px 110px" labels={['Employé', 'Jobs', 'Revenu', 'Taux', 'Commission', '']} />
               {techs.map((c) => (
                 <div key={c.key}>
                   <div role="button" tabIndex={0} onClick={() => setOpenRow(openRow === c.key ? null : c.key)} style={{ cursor: 'pointer' }}>
-                    <Row cols="1fr 70px 90px 90px 110px">
-                      <NameCell name={c.name} sub={`Tech fenêtres · ${openRow === c.key ? 'replier' : 'voir les jobs'}`} />
+                    <Row cols="1fr 70px 90px 56px 90px 110px">
+                      <NameCell name={c.name} sub={`Vitres · ${openRow === c.key ? 'replier' : 'voir les jobs'}`} />
                       <span>{c.jobs}</span>
                       <span>{money(c.sales)}</span>
+                      <Badge>{c.rate}%</Badge>
                       <strong style={{ color: '#0D6E6F' }}>{money(c.commission)}</strong>
                       <PayBtn paid={c.paid} onClick={(ev) => { ev.stopPropagation(); togglePaid(c) }} />
                     </Row>
                   </div>
-                  {openRow === c.key && <JobsDetail jobs={jobsOf(c.profile_id)} />}
+                  {openRow === c.key && (
+                    <JobsDetail jobs={jobsOf(c.profile_id)} rates={ratesById.get(c.profile_id) ?? EMPTY_RATES} />
+                  )}
                 </div>
               ))}
             </Card>
           )}
+
+          {overrides.length > 0 && (
+            <>
+              <SectionTitle>Override sur les ventes de l&apos;équipe</SectionTitle>
+              <Card>
+                <Header cols="1fr 110px 56px 90px 110px" labels={['Employé', 'Ventes équipe', 'Taux', 'Commission', '']} />
+                {overrides.map((c) => (
+                  <Row key={c.key} cols="1fr 110px 56px 90px 110px">
+                    <NameCell name={c.name} sub={`${c.deals} vente(s) de l'équipe`} />
+                    <span>{money(c.sales)}</span>
+                    <Badge>{c.rate}%</Badge>
+                    <strong style={{ color: '#0D6E6F' }}>{money(c.commission)}</strong>
+                    <PayBtn paid={c.paid} onClick={() => togglePaid(c)} />
+                  </Row>
+                ))}
+              </Card>
+            </>
+          )}
         </>
       ) : (
-        <HoursDatasheet hours={hours} onTogglePaid={toggleHoursPaid} jobsOf={jobsOf} />
+        <HoursDatasheet hours={hours} onTogglePaid={toggleHoursPaid} jobsOf={jobsOf} ratesById={ratesById} />
       )}
     </>
   )
 }
 
 // Détail « toutes les jobs faites » d'un employé sur la période.
-function JobsDetail({ jobs }: { jobs: DoneJobRow[] }) {
+// Les jobs au pourcentage affichent ce que CE technicien touche (le % porte sur
+// le prix complet, pas sur une part divisée) ; les jobs horaires renvoient aux
+// feuilles de temps.
+function JobsDetail({ jobs, rates }: { jobs: DoneJobRow[]; rates?: PayRates }) {
   if (!jobs.length) return <div style={{ padding: '4px 14px 12px', background: '#F9FAFB', fontSize: 12, color: '#9CA3AF' }}>Aucun job « complété » assigné sur la période.</div>
+  const r = rates ?? EMPTY_RATES
   return (
     <div style={{ padding: '0 14px 12px', background: '#F9FAFB' }}>
       {jobs.map((j) => {
-        const n = j.assigned_ids?.length || 1
-        const share = (Number(j.price) || 0) / n
+        const { mode, amount } = jobPayFor(j, r)
+        const meta = PAY_MODE_BY_ID[mode]
+        const percent = meta?.kind === 'percent'
         return (
-          <div key={j.id} style={{ display: 'grid', gridTemplateColumns: '80px 1fr 80px 90px', gap: 8, padding: '6px 0', fontSize: 12, color: '#6B7280', borderTop: '1px solid #F3F4F6' }}>
+          <div key={j.id} style={{ display: 'grid', gridTemplateColumns: '80px 1fr 96px 80px 90px', gap: 8, padding: '6px 0', fontSize: 12, color: '#6B7280', borderTop: '1px solid #F3F4F6', alignItems: 'center' }}>
             <span style={{ textTransform: 'capitalize', fontWeight: 600, color: '#374151' }}>
               {j.start_at ? new Date(j.start_at).toLocaleDateString('fr-CA', { weekday: 'short', day: 'numeric', month: 'short' }) : '—'}
             </span>
             <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
               {j.type === 'fenetre' ? '🪟' : j.type === 'gazon' ? '🌿' : '🔨'} {j.title || j.service || 'Job'}
             </span>
-            <span>{money(Number(j.price) || 0)}{n > 1 ? ` ÷${n}` : ''}</span>
-            <span style={{ textAlign: 'right', fontWeight: 700, color: '#0D6E6F' }}>{money(share)}</span>
+            <span style={{ fontSize: 10, fontWeight: 700, color: '#6B7280', textTransform: 'uppercase', letterSpacing: '0.04em', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              {meta?.short ?? '—'}{percent ? ` ${r[meta.rate]}%` : ''}
+            </span>
+            <span>{money(Number(j.price) || 0)}</span>
+            <span style={{ textAlign: 'right', fontWeight: 700, color: percent ? '#0D6E6F' : '#9CA3AF' }}>
+              {percent ? money(amount) : 'aux heures'}
+            </span>
           </div>
         )
       })}
@@ -310,10 +352,20 @@ function PeriodNav({ weekOf, mode, onChange }: { weekOf: string; mode: 'week' | 
   )
 }
 
-function HoursDatasheet({ hours, onTogglePaid, jobsOf }: {
+// « 20,00 $/h · commercial 22,00 $/h » selon ce que l'employé a réellement pointé.
+function hourlyLabel(e: EmployeeHours): string {
+  const parts: string[] = []
+  if (e.rates.rate_paysagement > 0) parts.push(`${money2(e.rates.rate_paysagement)}/h`)
+  const usedCommercial = e.rows.some((r) => r.work_type === 'commercial')
+  if (usedCommercial && e.rates.rate_commercial > 0) parts.push(`commercial ${money2(e.rates.rate_commercial)}/h`)
+  return parts.length ? parts.join(' · ') : 'taux non défini'
+}
+
+function HoursDatasheet({ hours, onTogglePaid, jobsOf, ratesById }: {
   hours: EmployeeHours[]
   onTogglePaid: (e: EmployeeHours) => void
   jobsOf: (profileId: string) => DoneJobRow[]
+  ratesById: Map<string, PayRates>
 }) {
   const [open, setOpen] = useState<string | null>(null)
   if (hours.length === 0) return <Empty text="Aucune heure pointée sur la période." />
@@ -323,7 +375,7 @@ function HoursDatasheet({ hours, onTogglePaid, jobsOf }: {
         <div key={e.profile_id} style={{ borderTop: i ? '1px solid #F3F4F6' : 'none' }}>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 64px 90px 110px', gap: 8, padding: '12px 14px', alignItems: 'center', cursor: 'pointer' }}
             onClick={() => setOpen(open === e.profile_id ? null : e.profile_id)}>
-            <NameCell name={e.name} sub={`${e.hourly_rate > 0 ? money2(e.hourly_rate) + '/h' : 'taux non défini'}`} />
+            <NameCell name={e.name} sub={hourlyLabel(e)} />
             <span style={{ fontSize: 13 }}>{e.totalHours.toFixed(1)}h</span>
             <strong style={{ color: '#697035' }}>{money2(e.pay)}</strong>
             <PayBtn paid={e.paid} onClick={(ev) => { ev.stopPropagation(); onTogglePaid(e) }} />
@@ -331,14 +383,20 @@ function HoursDatasheet({ hours, onTogglePaid, jobsOf }: {
           {open === e.profile_id && (
             <>
               <div style={{ padding: '0 14px 12px', background: '#F9FAFB' }}>
-                {e.rows.map((r) => (
-                  <div key={r.id} style={{ display: 'grid', gridTemplateColumns: '1fr 70px 70px 60px', gap: 8, padding: '6px 0', fontSize: 12, color: '#6B7280' }}>
-                    <span style={{ textTransform: 'capitalize', fontWeight: 600, color: '#374151' }}>{new Date(r.date + 'T00:00:00').toLocaleDateString('fr-CA', { weekday: 'short', day: 'numeric', month: 'short' })}</span>
-                    <span>{r.clock_in ? new Date(r.clock_in).toLocaleTimeString('fr-CA', { hour: '2-digit', minute: '2-digit' }) : '—'}</span>
-                    <span>{r.clock_out ? new Date(r.clock_out).toLocaleTimeString('fr-CA', { hour: '2-digit', minute: '2-digit' }) : '—'}</span>
-                    <span style={{ textAlign: 'right', fontWeight: 700, color: '#697035' }}>{(Number(r.hours) || 0).toFixed(1)}h</span>
-                  </div>
-                ))}
+                {e.rows.map((r) => {
+                  const rate = hourlyRateFor(r.work_type, ratesById.get(e.profile_id) ?? e.rates)
+                  return (
+                    <div key={r.id} style={{ display: 'grid', gridTemplateColumns: '1fr 96px 70px 70px 60px', gap: 8, padding: '6px 0', fontSize: 12, color: '#6B7280' }}>
+                      <span style={{ textTransform: 'capitalize', fontWeight: 600, color: '#374151' }}>{new Date(r.date + 'T00:00:00').toLocaleDateString('fr-CA', { weekday: 'short', day: 'numeric', month: 'short' })}</span>
+                      <span style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                        {r.work_type === 'commercial' ? 'Commercial' : 'Paysagement'} · {money2(rate)}
+                      </span>
+                      <span>{r.clock_in ? new Date(r.clock_in).toLocaleTimeString('fr-CA', { hour: '2-digit', minute: '2-digit' }) : '—'}</span>
+                      <span>{r.clock_out ? new Date(r.clock_out).toLocaleTimeString('fr-CA', { hour: '2-digit', minute: '2-digit' }) : '—'}</span>
+                      <span style={{ textAlign: 'right', fontWeight: 700, color: '#697035' }}>{(Number(r.hours) || 0).toFixed(1)}h</span>
+                    </div>
+                  )
+                })}
               </div>
               {jobsOf(e.profile_id).length > 0 && (
                 <>
@@ -361,7 +419,7 @@ function PersoPayes({ profileId, role }: { profileId: string; role: string }) {
   const [weekOf, setWeekOf] = useState(mondayOf())
   const [comm, setComm] = useState<CommissionRow[]>([])
   const [ts, setTs] = useState<TimesheetRow[]>([])
-  const [rate, setRate] = useState(0)
+  const [rates, setRates] = useState<PayRates>(EMPTY_RATES)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -369,16 +427,17 @@ function PersoPayes({ profileId, role }: { profileId: string; role: string }) {
     Promise.all([
       getMyCommission(profileId, weekOf),
       getMyTimesheets(profileId, weekOf),
-      supabase.from('profiles').select('hourly_rate').eq('id', profileId).single(),
+      supabase.from('profiles').select('*').eq('id', profileId).single(),
     ]).then(([c, t, p]) => {
       setComm(c)
       setTs(t)
-      setRate(Number(p.data?.hourly_rate) || 0)
+      setRates(payRatesOf(p.data))
       setLoading(false)
     })
   }, [profileId, weekOf])
 
   const totalHours = ts.reduce((s, r) => s + (Number(r.hours) || 0), 0)
+  const totalHourPay = ts.reduce((s, r) => s + (Number(r.hours) || 0) * hourlyRateFor(r.work_type, rates), 0)
   const totalComm = comm.reduce((s, c) => s + (Number(c.commission_amount) || 0) + (Number(c.bonus) || 0), 0)
   const isTerrain = role === 'terrain'
 
@@ -402,7 +461,13 @@ function PersoPayes({ profileId, role }: { profileId: string; role: string }) {
                     <div style={{ fontSize: 34, fontWeight: 800, color: '#0D6E6F', margin: '4px 0 2px' }}>{money(totalComm)}</div>
                     {comm.map((c) => (
                       <div key={c.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, color: '#374151', padding: '8px 0', borderTop: '1px solid #F3F4F6' }}>
-                        <span>{c.type === 'tech' ? `${c.jobs_count} job(s) · 18%` : `${c.deals_closed} vente(s) · ${money(c.sales_amount)} @ ${c.rate}%`}</span>
+                        <span>{
+                          c.type === 'vitres' || c.type === 'tech'
+                            ? `${c.jobs_count} job(s) de vitres · ${money(c.sales_amount)} @ ${c.rate}%`
+                            : c.type === 'override'
+                              ? `Override équipe · ${c.deals_closed} vente(s) · ${money(c.sales_amount)} @ ${c.rate}%`
+                              : `${c.deals_closed} vente(s) · ${money(c.sales_amount)} @ ${c.rate}%`
+                        }</span>
                         <span style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                           <strong>{money(c.commission_amount + (c.bonus || 0))}</strong>
                           <Badge green={c.paid}>{c.paid ? 'Payé ✓' : 'En attente'}</Badge>
@@ -418,17 +483,26 @@ function PersoPayes({ profileId, role }: { profileId: string; role: string }) {
           {/* heures (terrain ou capacité paysagement) */}
           {(isTerrain || ts.length > 0) && (
             <>
-              <SectionTitle>Mes heures{rate > 0 ? ` · ${money2(rate)}/h` : ''}</SectionTitle>
+              <SectionTitle>Mes heures{
+                rates.rate_paysagement > 0
+                  ? ` · ${money2(rates.rate_paysagement)}/h${rates.rate_commercial > 0 && rates.rate_commercial !== rates.rate_paysagement ? ` · commercial ${money2(rates.rate_commercial)}/h` : ''}`
+                  : ''
+              }</SectionTitle>
               {ts.length === 0 ? <Empty text="Aucune heure pointée cette semaine." /> : (
                 <Card>
                   <div style={{ padding: 16 }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 10 }}>
-                      <span style={{ fontSize: 28, fontWeight: 800, color: '#697035' }}>{money2(totalHours * rate)}</span>
+                      <span style={{ fontSize: 28, fontWeight: 800, color: '#697035' }}>{money2(totalHourPay)}</span>
                       <span style={{ fontSize: 13, color: '#6B7280' }}>{totalHours.toFixed(1)} h</span>
                     </div>
                     {ts.map((r) => (
                       <div key={r.id} style={{ display: 'grid', gridTemplateColumns: '1fr 70px 70px 56px', gap: 8, padding: '6px 0', fontSize: 12, color: '#6B7280', borderTop: '1px solid #F3F4F6' }}>
-                        <span style={{ textTransform: 'capitalize', fontWeight: 600, color: '#374151' }}>{new Date(r.date + 'T00:00:00').toLocaleDateString('fr-CA', { weekday: 'short', day: 'numeric', month: 'short' })}</span>
+                        <span style={{ minWidth: 0 }}>
+                          <span style={{ display: 'block', textTransform: 'capitalize', fontWeight: 600, color: '#374151' }}>{new Date(r.date + 'T00:00:00').toLocaleDateString('fr-CA', { weekday: 'short', day: 'numeric', month: 'short' })}</span>
+                          <span style={{ display: 'block', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: '#9CA3AF' }}>
+                            {WORK_TYPES.find((w) => w.id === (r.work_type ?? 'paysagement'))?.label ?? 'Paysagement'} · {money2(hourlyRateFor(r.work_type, rates))}
+                          </span>
+                        </span>
                         <span>{r.clock_in ? new Date(r.clock_in).toLocaleTimeString('fr-CA', { hour: '2-digit', minute: '2-digit' }) : '—'}</span>
                         <span>{r.clock_out ? new Date(r.clock_out).toLocaleTimeString('fr-CA', { hour: '2-digit', minute: '2-digit' }) : '—'}</span>
                         <span style={{ textAlign: 'right', fontWeight: 700, color: '#697035' }}>{(Number(r.hours) || 0).toFixed(1)}h</span>

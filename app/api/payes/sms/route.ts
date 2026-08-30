@@ -1,5 +1,6 @@
 import { supabaseAdmin } from '@/lib/supabaseAdmin'
 import { sendSms } from '@/lib/sms'
+import { payRatesOf, hourlyRateFor } from '@/lib/payes'
 
 // ============================================================
 // POST /api/payes/sms — envoie la liste des salaires de la semaine
@@ -33,7 +34,7 @@ export async function POST(request: Request) {
 
   const [{ data: comms }, { data: ts }] = await Promise.all([
     supabaseAdmin.from('commissions').select('commission_amount, bonus, paid, type, profiles(full_name)').in('week_of', weekList),
-    supabaseAdmin.from('timesheets').select('hours, paid, profiles(full_name, hourly_rate)').gte('date', week_of).lt('date', endDate),
+    supabaseAdmin.from('timesheets').select('hours, paid, work_type, profiles(*)').gte('date', week_of).lt('date', endDate),
   ])
 
   // agrège par nom
@@ -48,20 +49,28 @@ export async function POST(request: Request) {
     const e = lines.get(name) ?? { amount: 0, paid: true, detail: [] }
     e.amount += amt
     e.paid = e.paid && !!c.paid
-    e.detail.push(c.type === 'tech' ? 'comm. tech' : 'comm. vente')
+    e.detail.push(
+      c.type === 'vitres' || c.type === 'tech' ? 'vitres'
+        : c.type === 'override' ? 'override'
+        : 'ventes'
+    )
     lines.set(name, e)
   }
-  const hoursByName = new Map<string, { hours: number; rate: number; paid: boolean }>()
+  // chaque feuille de temps est payée à SON taux (paysagement vs commercial)
+  const hoursByName = new Map<string, { hours: number; pay: number; paid: boolean }>()
   for (const t of ts ?? []) {
-    const prof = (Array.isArray(t.profiles) ? t.profiles[0] : t.profiles) as { full_name?: string; hourly_rate?: number } | null
-    const name = prof?.full_name ?? '—'
-    const e = hoursByName.get(name) ?? { hours: 0, rate: Number(prof?.hourly_rate) || 0, paid: true }
-    e.hours += Number(t.hours) || 0
+    const prof = (Array.isArray(t.profiles) ? t.profiles[0] : t.profiles) as Record<string, unknown> | null
+    const name = (prof?.full_name as string) ?? '—'
+    const rate = hourlyRateFor(t.work_type as string | null, payRatesOf(prof))
+    const e = hoursByName.get(name) ?? { hours: 0, pay: 0, paid: true }
+    const h = Number(t.hours) || 0
+    e.hours += h
+    e.pay += h * rate
     e.paid = e.paid && !!t.paid
     hoursByName.set(name, e)
   }
   for (const [name, h] of hoursByName) {
-    const amt = Math.round(h.hours * h.rate * 100) / 100
+    const amt = Math.round(h.pay * 100) / 100
     const e = lines.get(name) ?? { amount: 0, paid: true, detail: [] }
     e.amount += amt
     e.paid = e.paid && h.paid

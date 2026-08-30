@@ -5,6 +5,7 @@ import { createJob, updateJob, deleteJob, clientName, type Job, type JobInput, t
 import { searchClients, fullAddress, type Client } from '@/lib/queries/clients'
 import { GAZON_ROUTES, findRoute, routeLabel } from '@/lib/gazon-routes'
 import { autoFocusDesktop } from '@/lib/ui'
+import { PAY_MODES, PAY_MODE_BY_ID, autoPayMode, type PayMode } from '@/lib/payes'
 import type { Lane, ProfileMini } from './WeekCalendar'
 import JobExtras from './JobExtras'
 import { Trash2, Navigation, Phone, Play } from 'lucide-react'
@@ -69,12 +70,17 @@ export default function JobModal({ kind, canEdit = true, userId = null, lanes, a
   const [team, setTeam] = useState(job?.team ?? initialTeam ?? lanes[0]?.id ?? 'equipe1')
   const [assigned, setAssigned] = useState<string[]>(job?.assigned_ids ?? [])
   const [price, setPrice] = useState(job?.price != null ? String(job.price) : '')
+  // '' = auto (déduit du type/service/nb d'assignés au moment du calcul de paye)
+  const [payMode, setPayMode] = useState<string>(job?.pay_mode ?? '')
   const [status, setStatus] = useState(job?.status ?? 'scheduled')
   const [notes, setNotes] = useState(job?.notes ?? '')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
 
   const isGazon = kind === 'paysagement' && type === 'gazon'
+  // mode déduit si l'admin laisse « Auto » (dépend du nb d'assignés → réactif)
+  const autoMode: PayMode = autoPayMode(type, service, assigned.length)
+  const effectiveMode: PayMode = (payMode as PayMode) || autoMode
 
   // --- autocomplétion client (fenêtres + projets) : taper un nom existant
   // remplit adresse / téléphone / courriel et rattache le job au client.
@@ -143,6 +149,7 @@ export default function JobModal({ kind, canEdit = true, userId = null, lanes, a
       payload.client_phone = clientPhone.trim() || null
       payload.client_email = clientEmail.trim() || null
     }
+    if (payMode || job?.pay_mode != null) payload.pay_mode = payMode || null
     const { error: e } = isEdit ? await updateJob(job!.id, payload) : await createJob(payload)
     setSaving(false)
     if (e) { setError(e); return }
@@ -302,6 +309,23 @@ export default function JobModal({ kind, canEdit = true, userId = null, lanes, a
             <Field label="Fin" flex><input type="time" value={end} onChange={(e) => setEnd(e.target.value)} style={inp} /></Field>
             {!isGazon && <Field label="Prix ($)" flex><input value={price} onChange={(e) => setPrice(e.target.value)} type="number" inputMode="decimal" style={inp} /></Field>}
           </div>
+
+          {!isGazon && (
+            <Field label="Mode de paye">
+              <select value={payMode} onChange={(e) => setPayMode(e.target.value)} style={inp}>
+                <option value="">Auto — {PAY_MODE_BY_ID[autoMode].label}</option>
+                {PAY_MODES.map((m) => (
+                  <option key={m.id} value={m.id}>{m.label}</option>
+                ))}
+              </select>
+              <p style={{ margin: '5px 2px 0', fontSize: 11, color: '#9CA3AF', lineHeight: 1.45 }}>
+                {PAY_MODE_BY_ID[effectiveMode].kind === 'percent'
+                  ? `Chaque technicien assigné touche son % ${PAY_MODE_BY_ID[effectiveMode].short.toLowerCase()} du prix complet.`
+                  : 'Payé aux heures pointées, pas au prix de la job.'}
+                {' '}Auto = solo si un seul assigné, sinon équipe.
+              </p>
+            </Field>
+          )}
 
           <Field label={kind === 'fenetre' ? 'Techniciens assignés' : 'Équipe assignée'}>
             {ro ? (

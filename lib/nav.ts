@@ -52,7 +52,8 @@ export const NAV_BY_ROLE: Record<string, NavSection[]> = {
     { title: 'Principal',     items: [I.accueil, I.carte, I.dashboard] },
     { title: 'Ventes',        items: [I.pipeline, I.clients] },
     { title: 'Planification', items: [I.calFen, I.calPays, I.gazon] },
-    { title: 'Finance',       items: [I.soumissions, I.payesPerso] },
+    // pointage : la grille 2026 donne aussi des taux horaires au directeur
+    { title: 'Finance',       items: [I.soumissions, I.payesPerso, I.pointage] },
     { title: 'Compte',        items: [I.profil] },
   ],
   rep: [
@@ -61,8 +62,10 @@ export const NAV_BY_ROLE: Record<string, NavSection[]> = {
     { title: 'Finance',   items: [I.payesPerso] },
     { title: 'Compte',    items: [I.profil] },
   ],
+  // pointage : un laveur de vitres a DEUX taux horaires (paysagement 20 $/h,
+  // commercial/copro 22 $/h) en plus de ses % — il doit pouvoir puncher.
   tech: [
-    { title: 'Mon espace', items: [I.horaireFen, I.pipeline, I.soumissions] },
+    { title: 'Mon espace', items: [I.horaireFen, I.pointage, I.pipeline, I.soumissions] },
     { title: 'Finance',    items: [I.payesPerso] },
     { title: 'Compte',     items: [I.profil] },
   ],

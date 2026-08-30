@@ -2,13 +2,16 @@
 import { useEffect, useState, useCallback } from 'react'
 import { supabase } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
-import { LogOut, Copy, Check } from 'lucide-react'
+import { LogOut, Copy, Check, KeyRound } from 'lucide-react'
 import SettingsSection from '@/components/profil/SettingsSection'
 import EmployeeCard, { Employee } from '@/components/profil/EmployeeCard'
 import ColorPicker from '@/components/profil/ColorPicker'
 import AppSettingsForm from '@/components/profil/AppSettingsForm'
 import MapSettingsForm from '@/components/profil/MapSettingsForm'
 import SaleSettingsForm from '@/components/profil/SaleSettingsForm'
+import PasswordSection from '@/components/profil/PasswordSection'
+import { getTempPasswords, generateTempPasswords, type TempCredential } from '@/lib/queries/credentials'
+import { payRatesOf, PAY_RATE_FIELDS, money2 } from '@/lib/payes'
 import { isManager } from '@/lib/roles'
 
 // ─── helpers ────────────────────────────────────────────────
@@ -126,9 +129,188 @@ function Spinner() {
   )
 }
 
+// ─── Ma grille de paye (employé, lecture seule) ─────────────
+
+function MyPayRates({ profile }: { profile: any }) {
+  const rates = payRatesOf(profile)
+  const active = PAY_RATE_FIELDS.filter(f => rates[f.key] > 0)
+  if (active.length === 0) return null
+
+  return (
+    <SettingsSection title="Ma grille de paye" description="Définie par la direction">
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {active.map(f => (
+          <div key={f.key} style={{
+            display: 'flex', alignItems: 'center', gap: 12,
+            background: '#F9FAFB', borderRadius: 10, padding: '10px 12px',
+          }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <p style={{ color: '#111827', fontWeight: 600, fontSize: 13, margin: 0 }}>{f.label}</p>
+              <p style={{ color: '#9CA3AF', fontSize: 11, margin: '1px 0 0', lineHeight: 1.35 }}>{f.hint}</p>
+            </div>
+            <span style={{
+              color: '#0D6E6F', fontWeight: 800, fontSize: 17, flexShrink: 0,
+              fontVariantNumeric: 'tabular-nums',
+            }}>
+              {f.unit === '%' ? `${rates[f.key]} %` : `${money2(rates[f.key])}/h`}
+            </span>
+          </div>
+        ))}
+      </div>
+    </SettingsSection>
+  )
+}
+
+// ─── Onglet « Mots de passe » (manager) ─────────────────────
+
+function PasswordsTab({
+  employees, tempPws, busy, msg, copiedAll, onRegenAll, onCopyAll,
+}: {
+  employees: any[]
+  tempPws: Map<string, TempCredential>
+  busy: boolean
+  msg: string | null
+  copiedAll: boolean
+  onRegenAll: () => void
+  onCopyAll: (list: { name: string; user: string; pw: string }[]) => void
+}) {
+  const [copiedId, setCopiedId] = useState<string | null>(null)
+
+  const identOf = (e: any) => e.username || e.email || '—'
+  const withPw = employees
+    .filter(e => tempPws.has(e.id))
+    .map(e => ({ name: e.full_name as string, user: identOf(e), pw: tempPws.get(e.id)!.password }))
+
+  const copyOne = (id: string, pw: string) => {
+    navigator.clipboard.writeText(pw).then(() => {
+      setCopiedId(id)
+      setTimeout(() => setCopiedId(null), 2000)
+    })
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <div style={{
+        background: '#FFFFFF', borderRadius: 12, border: '1px solid #E5E7EB',
+        boxShadow: '0 1px 3px rgba(0,0,0,0.04)', padding: 16,
+      }}>
+        <p style={{ color: '#111827', fontWeight: 700, fontSize: 15, margin: '0 0 6px' }}>
+          Mots de passe temporaires
+        </p>
+        <p style={{ color: '#6B7280', fontSize: 12, margin: '0 0 14px', lineHeight: 1.55 }}>
+          Chaque employé reçoit un mot de passe <strong>différent</strong>, visible ici pour que
+          tu puisses le lui envoyer. Dès qu&apos;il en choisit un lui-même dans son profil,
+          il disparaît de cette liste et devient invisible — même pour toi.
+        </p>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <button
+            onClick={onRegenAll}
+            disabled={busy}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 6, background: '#69C9CA', color: '#06363B',
+              border: 'none', borderRadius: 8, padding: '10px 14px', fontSize: 13, fontWeight: 700,
+              cursor: busy ? 'not-allowed' : 'pointer', fontFamily: 'Inter, sans-serif',
+            }}
+          >
+            <KeyRound size={14} />
+            {busy ? 'Génération…' : 'Générer pour toute l\u2019équipe'}
+          </button>
+          {withPw.length > 0 && (
+            <button
+              onClick={() => onCopyAll(withPw)}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 6,
+                background: copiedAll ? '#10B981' : '#FFFFFF',
+                color: copiedAll ? '#FFFFFF' : '#374151',
+                border: '1px solid #D1D5DB', borderRadius: 8, padding: '10px 14px',
+                fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: 'Inter, sans-serif',
+              }}
+            >
+              {copiedAll ? <Check size={14} /> : <Copy size={14} />}
+              {copiedAll ? 'Liste copiée !' : `Copier la liste (${withPw.length})`}
+            </button>
+          )}
+        </div>
+        {msg && (
+          <p style={{
+            background: '#ECFDF5', color: '#065F46', border: '1px solid #A7F3D0',
+            borderRadius: 8, padding: '8px 10px', fontSize: 12, margin: '12px 0 0',
+          }}>
+            {msg}
+          </p>
+        )}
+      </div>
+
+      <div style={{
+        background: '#FFFFFF', borderRadius: 12, border: '1px solid #E5E7EB',
+        boxShadow: '0 1px 3px rgba(0,0,0,0.04)', overflow: 'hidden',
+      }}>
+        {employees.length === 0 && (
+          <p style={{ padding: 24, textAlign: 'center', color: '#9CA3AF', fontSize: 13, margin: 0 }}>
+            Aucun employé.
+          </p>
+        )}
+        {employees.map((e: any, i: number) => {
+          const cred = tempPws.get(e.id)
+          return (
+            <div key={e.id} style={{
+              display: 'flex', alignItems: 'center', gap: 10, padding: '12px 14px',
+              borderTop: i ? '1px solid #F3F4F6' : 'none',
+            }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <p style={{ color: '#111827', fontWeight: 600, fontSize: 14, margin: 0 }}>
+                  {e.full_name}
+                </p>
+                <p style={{
+                  color: '#9CA3AF', fontSize: 11, margin: '2px 0 0',
+                  overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                }}>
+                  identifiant : {identOf(e)}
+                </p>
+              </div>
+              {cred ? (
+                <>
+                  <code style={{
+                    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+                    fontSize: 14, fontWeight: 700, color: '#92400E',
+                    background: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: 6,
+                    padding: '5px 9px', userSelect: 'all', flexShrink: 0, letterSpacing: '0.03em',
+                  }}>
+                    {cred.password}
+                  </code>
+                  <button
+                    onClick={() => copyOne(e.id, cred.password)}
+                    aria-label="Copier"
+                    style={{
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      width: 32, height: 32, flexShrink: 0, borderRadius: 8, cursor: 'pointer',
+                      border: '1px solid #D1D5DB',
+                      background: copiedId === e.id ? '#10B981' : '#FFFFFF',
+                      color: copiedId === e.id ? '#FFFFFF' : '#6B7280',
+                    }}
+                  >
+                    {copiedId === e.id ? <Check size={14} /> : <Copy size={14} />}
+                  </button>
+                </>
+              ) : (
+                <span style={{
+                  background: '#F0FDF4', color: '#166534', fontSize: 11, fontWeight: 600,
+                  padding: '4px 10px', borderRadius: 999, flexShrink: 0, whiteSpace: 'nowrap',
+                }}>
+                  🔒 Personnel
+                </span>
+              )}
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
 // ─── type Tab ───────────────────────────────────────────────
 
-type ManagerTab = 'equipe' | 'parametres'
+type ManagerTab = 'equipe' | 'motsdepasse' | 'parametres'
 
 // ═══════════════════════════════════════════════════════════
 // PAGE
@@ -140,6 +322,10 @@ export default function ProfilPage() {
   const [profile, setProfile]           = useState<any>(null)
   const [allProfiles, setAllProfiles]   = useState<any[]>([])
   const [appSettings, setAppSettings]   = useState<Record<string, string>>({})
+  const [tempPws, setTempPws]           = useState<Map<string, TempCredential>>(new Map())
+  const [pwBusy, setPwBusy]             = useState(false)
+  const [pwMsg, setPwMsg]               = useState<string | null>(null)
+  const [copiedAll, setCopiedAll]       = useState(false)
   const [needsMigration, setNeedsMigration] = useState(false)
   const [loading, setLoading]           = useState(true)
   const [managerTab, setManagerTab]     = useState<ManagerTab>('equipe')
@@ -170,6 +356,9 @@ export default function ProfilPage() {
     const { data: allP } = await supabase.from('profiles').select('*')
     setAllProfiles(allP || [])
 
+    // mots de passe temporaires — RLS admin-only, silencieux sinon
+    setTempPws(await getTempPasswords())
+
     // app_settings — graceful degradation if table missing
     const { data: settings, error: settingsErr } = await supabase.from('app_settings').select('*')
     if (settingsErr) {
@@ -199,6 +388,29 @@ export default function ProfilPage() {
     setPhoneSaving(false)
     setPhoneSaved(true)
     setTimeout(() => setPhoneSaved(false), 2500)
+  }
+
+  const regenAll = async () => {
+    if (!confirm(
+      'Générer un NOUVEAU mot de passe temporaire pour toute l\u2019équipe ?\n\n' +
+      'Les mots de passe actuels (y compris ceux que les employés ont choisis eux-mêmes) ' +
+      'cesseront de fonctionner et devront être renvoyés.'
+    )) return
+    setPwBusy(true)
+    setPwMsg(null)
+    const r = await generateTempPasswords({ all: true })
+    setPwBusy(false)
+    setPwMsg(r.ok ? `${r.count} mot(s) de passe généré(s).` : (r.error ?? 'Échec'))
+    setTimeout(() => setPwMsg(null), 5000)
+    loadData()
+  }
+
+  const copyAll = (list: { name: string; user: string; pw: string }[]) => {
+    const text = list.map(l => `${l.name} — identifiant : ${l.user} — mot de passe : ${l.pw}`).join('\n')
+    navigator.clipboard.writeText(text).then(() => {
+      setCopiedAll(true)
+      setTimeout(() => setCopiedAll(false), 2500)
+    })
   }
 
   const saveColor = async (newColor: string) => {
@@ -287,7 +499,7 @@ export default function ProfilPage() {
             Profil &amp; Paramètres
           </h1>
           <div style={{ display: 'flex', gap: 0 }}>
-            {(['equipe', 'parametres'] as ManagerTab[]).map(tab => (
+            {(['equipe', 'motsdepasse', 'parametres'] as ManagerTab[]).map(tab => (
               <button
                 key={tab}
                 onClick={() => setManagerTab(tab)}
@@ -300,7 +512,7 @@ export default function ProfilPage() {
                   transition: 'color 150ms, border-color 150ms',
                 }}
               >
-                {tab === 'equipe' ? 'Équipe' : 'Paramètres'}
+                {tab === 'equipe' ? 'Équipe' : tab === 'motsdepasse' ? 'Mots de passe' : 'Paramètres'}
               </button>
             ))}
           </div>
@@ -330,11 +542,25 @@ export default function ProfilPage() {
                       employee={emp as Employee}
                       usedColors={usedColors}
                       onUpdated={loadData}
+                      tempPassword={tempPws.get(emp.id) ?? null}
                     />
                   ))}
                 </div>
               </div>
             </>
+          )}
+
+          {/* ── Tab: Mots de passe ── */}
+          {managerTab === 'motsdepasse' && (
+            <PasswordsTab
+              employees={vendeurs}
+              tempPws={tempPws}
+              busy={pwBusy}
+              msg={pwMsg}
+              copiedAll={copiedAll}
+              onRegenAll={regenAll}
+              onCopyAll={copyAll}
+            />
           )}
 
           {/* ── Tab: Paramètres ── */}
@@ -350,6 +576,10 @@ export default function ProfilPage() {
 
               <SettingsSection title="Services de vente" description="Services proposés lors de la création d'une porte">
                 <SaleSettingsForm initialSettings={appSettings} onSaved={loadData} />
+              </SettingsSection>
+
+              <SettingsSection title="Mon mot de passe" description="Choisis-en un connu de toi seul">
+                <PasswordSection onChanged={loadData} />
               </SettingsSection>
             </>
           )}
@@ -454,26 +684,16 @@ export default function ProfilPage() {
           </div>
         </SettingsSection>
 
-        {/* Commission (read-only) */}
-        {(profile.commission_type || profile.commission_value > 0) && (
-          <SettingsSection title="Ma commission" description="Définie par le manager">
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-              <div style={{
-                background: '#E8F8F8', borderRadius: 10,
-                padding: '12px 18px', textAlign: 'center',
-              }}>
-                <p style={{ color: '#0D6E6F', fontWeight: 800, fontSize: 24, margin: 0 }}>
-                  {profile.commission_type === 'percent'
-                    ? `${profile.commission_value}%`
-                    : `${profile.commission_value} $`}
-                </p>
-                <p style={{ color: '#6B7280', fontSize: 11, margin: '2px 0 0' }}>
-                  {profile.commission_type === 'percent' ? 'par vente' : 'fixe / vente'}
-                </p>
-              </div>
-            </div>
-          </SettingsSection>
-        )}
+        {/* Grille de paye (lecture seule) */}
+        <MyPayRates profile={profile} />
+
+        {/* Mot de passe */}
+        <SettingsSection
+          title="Mon mot de passe"
+          description="Choisis-en un connu de toi seul — la direction ne le verra pas"
+        >
+          <PasswordSection onChanged={loadData} />
+        </SettingsSection>
 
         <LogoutBtn />
       </div>

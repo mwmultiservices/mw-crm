@@ -25,6 +25,7 @@ export interface Job {
   all_day: boolean
   status: string // scheduled | done | canceled | dispo (slot mauve à vendre)
   price: number | null
+  pay_mode?: string | null // null = déduit (cf. autoPayMode dans lib/payes)
   notes: string | null
   clients?: { name: string } | { name: string }[] | null
 }
@@ -99,6 +100,7 @@ export interface JobInput {
   end_at?: string | null
   status?: string
   price?: number | null
+  pay_mode?: string | null
   notes?: string | null
   client_id?: string | null
   lead_id?: string | null

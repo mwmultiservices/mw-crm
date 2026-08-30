@@ -5,7 +5,10 @@ import {
   getOpenTimesheet, clockIn, clockOut, getMyTimesheets, type TimesheetRow,
 } from '@/lib/queries/payes'
 import { getMyJobsForDay, jobLabel, jobDirectionsUrl, type Job } from '@/lib/queries/calendar'
-import { mondayOf, hoursBetween, money2, formatWeekLabel } from '@/lib/payes'
+import {
+  mondayOf, hoursBetween, money2, formatWeekLabel,
+  payRatesOf, hourlyRateFor, WORK_TYPES, EMPTY_RATES, type PayRates, type WorkType,
+} from '@/lib/payes'
 import { Play, Square, Clock, Navigation } from 'lucide-react'
 
 const fmtTime = (iso: string | null) =>
@@ -34,9 +37,50 @@ function currentJob(jobs: Job[]): Job | null {
   return next ?? jobs[jobs.length - 1]
 }
 
+// Quel taux horaire s'applique à ce bloc de temps. Affiché seulement aux
+// employés qui ont DEUX taux différents (ex. laveurs de vitres : 20 $/h
+// paysagement vs 22 $/h commercial).
+function WorkTypePicker({
+  value, onChange, rates, dark,
+}: {
+  value: WorkType
+  onChange: (v: WorkType) => void
+  rates: PayRates
+  dark?: boolean
+}) {
+  return (
+    <div style={{ display: 'flex', gap: 6, marginBottom: 12 }}>
+      {WORK_TYPES.map((w) => {
+        const on = value === w.id
+        const rate = hourlyRateFor(w.id, rates)
+        return (
+          <button
+            key={w.id}
+            onClick={() => onChange(w.id)}
+            style={{
+              flex: 1, padding: '9px 8px', borderRadius: 10, cursor: 'pointer',
+              fontSize: 12, fontWeight: 700, lineHeight: 1.3,
+              fontFamily: 'Inter, sans-serif', textAlign: 'center',
+              border: on ? '2px solid #10B981' : `1px solid ${dark ? '#ffffff33' : '#D1D5DB'}`,
+              background: on ? (dark ? '#10B98126' : '#ECFDF5') : (dark ? '#ffffff14' : '#FFF'),
+              color: dark ? '#FFF' : '#374151',
+            }}
+          >
+            <span style={{ display: 'block' }}>{w.label}</span>
+            <span style={{ display: 'block', fontSize: 11, fontWeight: 600, opacity: 0.75 }}>
+              {money2(rate)}/h
+            </span>
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
 export default function PointagePage() {
   const [profileId, setProfileId] = useState<string | null>(null)
-  const [hourlyRate, setHourlyRate] = useState(0)
+  const [rates, setRates] = useState<PayRates>(EMPTY_RATES)
+  const [workType, setWorkType] = useState<WorkType>('paysagement')
   const [open, setOpen] = useState<TimesheetRow | null>(null)
   const [week, setWeek] = useState<TimesheetRow[]>([])
   // jobs du jour assignées à l'employé (son horaire) + celle qu'il pointe
@@ -56,6 +100,7 @@ export default function PointagePage() {
     setOpen(o)
     setWeek(w)
     setTodayJobs(js)
+    if (o?.work_type === 'commercial' || o?.work_type === 'paysagement') setWorkType(o.work_type)
     // pré-sélection : la job en cours dans l'horaire (ou celle déjà pointée)
     const fromOpen = o?.job_note ? js.find((j) => jobLabel(j) === o.job_note) : null
     setJobId((fromOpen ?? currentJob(js))?.id ?? null)
@@ -65,8 +110,8 @@ export default function PointagePage() {
     supabase.auth.getUser().then(async ({ data: { user } }) => {
       if (!user) { setLoading(false); return }
       setProfileId(user.id)
-      const { data: p } = await supabase.from('profiles').select('hourly_rate').eq('id', user.id).single()
-      setHourlyRate(Number(p?.hourly_rate) || 0)
+      const { data: p } = await supabase.from('profiles').select('*').eq('id', user.id).single()
+      setRates(payRatesOf(p))
       await refresh(user.id)
       setLoading(false)
     })
@@ -88,7 +133,7 @@ export default function PointagePage() {
   const doClockIn = async () => {
     if (!profileId || busy) return
     setBusy(true)
-    await clockIn(profileId, jobNote)
+    await clockIn(profileId, jobNote, workType)
     setNote('')
     await refresh(profileId)
     setBusy(false)
@@ -102,7 +147,12 @@ export default function PointagePage() {
     setBusy(false)
   }
 
+  // le taux dépend de CE qui est pointé (paysagement 20-24 $/h vs commercial 22 $/h)
+  const hourlyRate = hourlyRateFor(workType, rates)
+  const showWorkType = rates.rate_commercial > 0 && rates.rate_commercial !== rates.rate_paysagement
+
   const totalHours = week.reduce((s, r) => s + (Number(r.hours) || 0), 0)
+  const weekPay = week.reduce((s, r) => s + (Number(r.hours) || 0) * hourlyRateFor(r.work_type, rates), 0)
   const elapsed = open?.clock_in
     ? Math.floor((now - new Date(open.clock_in).getTime()) / 1000)
     : 0
@@ -127,6 +177,7 @@ export default function PointagePage() {
           <>
             <div style={{ color: '#A7F3D0', fontSize: 12, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em' }}>En service depuis {fmtTime(open.clock_in)}</div>
             <div style={{ color: '#FFF', fontSize: 44, fontWeight: 800, fontVariantNumeric: 'tabular-nums', margin: '8px 0 16px' }}>{hh}:{mm}:{ss}</div>
+            {showWorkType && <WorkTypePicker value={workType} onChange={setWorkType} rates={rates} dark />}
             <JobPicker jobs={todayJobs} jobId={jobId} onPick={setJobId} note={note} setNote={setNote} dark />
             <button onClick={doClockOut} disabled={busy} style={{ ...bigBtn, background: '#EF4444', color: '#FFF' }}>
               <Square size={18} fill="#FFF" />Clock out
@@ -139,6 +190,7 @@ export default function PointagePage() {
             </div>
             <div style={{ color: '#111827', fontSize: 16, fontWeight: 700, marginBottom: 4 }}>Prêt à commencer</div>
             <div style={{ color: '#6B7280', fontSize: 13, marginBottom: 16 }}>Pointez en arrivant sur le chantier.</div>
+            {showWorkType && <WorkTypePicker value={workType} onChange={setWorkType} rates={rates} />}
             <JobPicker jobs={todayJobs} jobId={jobId} onPick={setJobId} note={note} setNote={setNote} />
             <button onClick={doClockIn} disabled={busy} style={{ ...bigBtn, background: '#10B981', color: '#FFF' }}>
               <Play size={18} fill="#FFF" />Clock in
@@ -151,7 +203,7 @@ export default function PointagePage() {
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
         <h2 style={{ fontSize: 13, fontWeight: 700, color: '#374151', textTransform: 'uppercase', letterSpacing: '0.06em', margin: 0 }}>Ma semaine</h2>
         <div style={{ fontSize: 13, color: '#6B7280' }}>
-          {totalHours.toFixed(1)} h{hourlyRate > 0 ? <> · <strong style={{ color: '#697035' }}>{money2(totalHours * hourlyRate)}</strong></> : null}
+          {totalHours.toFixed(1)} h{weekPay > 0 ? <> · <strong style={{ color: '#697035' }}>{money2(weekPay)}</strong></> : null}
         </div>
       </div>
 
