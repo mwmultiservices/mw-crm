@@ -161,16 +161,56 @@ export function terrainDirectionsUrl(t: Pick<GazonTerrain, 'address' | 'secteur'
 // utilisable côté serveur) et ré-exporté ici pour les imports existants.
 export { SHOP_ADDRESS }
 
-// Itinéraire multi-arrêts d'un secteur, dans l'ordre de passage, qui se
-// TERMINE toujours au shop. L'URL Google Maps accepte ~9 waypoints + 1
-// destination : la destination est le shop, donc au plus 9 terrains
-// (filtrer AVANT : restants à faire).
-export function gazonRouteUrl(terrains: Pick<GazonTerrain, 'address' | 'secteur'>[]): string | null {
-  const stops = terrains.map((t) => fullTerrainAddress(t.address, t.secteur)).filter(Boolean).slice(0, 9)
-  if (!stops.length) return null
-  let url = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(SHOP_ADDRESS)}&travelmode=driving`
-  url += `&waypoints=${stops.map((a) => encodeURIComponent(a)).join('%7C')}`
-  return url
+// Itinéraire multi-arrêts, dans l'ordre de passage, qui TERMINE au shop.
+//
+// ATTENTION — deux plafonds Google DIFFÉRENTS, ne pas confondre :
+//   • Routes API v2 (/api/gazon/optimize) = 25 arrêts intermédiaires/appel ;
+//   • ce deep link grand public (maps/dir/?api=1) = 9 waypoints + 1
+//     destination = 10 arrêts, point final. Monter la limite ne marche PAS,
+//     Google tronque silencieusement.
+// On découpe donc la run en SEGMENTS de 10 arrêts : la destination d'un
+// segment intermédiaire est son 10e terrain — soit exactement là où le gars
+// se trouve quand il ouvre le segment suivant — et le dernier rentre au shop.
+//
+// Les segments sont recalculés à partir des terrains RESTANTS : dès que les
+// 10 premiers sont cochés FAIT, le segment 1 devient les 10 suivants. Le
+// travailleur n'a donc qu'à reprendre le même bouton.
+const MAPS_MAX_WAYPOINTS = 9
+
+export interface GazonRouteSegment {
+  url: string
+  from: number // n° du 1er terrain du segment (1-based) ; 0 = segment « retour au shop » seul
+  to: number
+  endsAtShop: boolean
+}
+
+export function gazonRouteSegments(
+  terrains: Pick<GazonTerrain, 'address' | 'secteur'>[],
+): GazonRouteSegment[] {
+  const stops = terrains
+    .map((t) => fullTerrainAddress(t.address, t.secteur))
+    .filter((a) => a.length > 0)
+  if (!stops.length) return []
+
+  const link = (dest: string, wp: string[]) =>
+    `https://www.google.com/maps/dir/?api=1&travelmode=driving&destination=${encodeURIComponent(dest)}` +
+    (wp.length ? `&waypoints=${wp.map((a) => encodeURIComponent(a)).join('%7C')}` : '')
+
+  const segments: GazonRouteSegment[] = []
+  let i = 0
+  while (i < stops.length) {
+    const wp = stops.slice(i, i + MAPS_MAX_WAYPOINTS)
+    const next = stops[i + MAPS_MAX_WAYPOINTS] // 10e arrêt du lien, s'il existe
+    const take = wp.length + (next ? 1 : 0)
+    segments.push({ url: link(next ?? SHOP_ADDRESS, wp), from: i + 1, to: i + take, endsAtShop: !next })
+    i += take
+  }
+  // Total multiple de 10 : le dernier segment finit sur un terrain et non au
+  // shop → on ajoute le retour comme segment distinct.
+  if (!segments[segments.length - 1].endsAtShop) {
+    segments.push({ url: link(SHOP_ADDRESS, []), from: 0, to: 0, endsAtShop: true })
+  }
+  return segments
 }
 
 // ============================================================

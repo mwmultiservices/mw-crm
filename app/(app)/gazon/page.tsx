@@ -11,7 +11,7 @@ import {
   getTerrains, getPassagesWeek, getPassagesRange, getPassagesDay, setPassage, clearPassage,
   createTerrain, updateTerrain, deleteTerrain, reorderTerrains, getFaitEverIds,
   getNotesForDate, addNote, deleteNote, optimizeRoute,
-  terrainDirectionsUrl, gazonRouteUrl, SHOP_ADDRESS,
+  terrainDirectionsUrl, gazonRouteSegments, SHOP_ADDRESS,
   type GazonTerrain, type GazonPassage, type GazonTerrainInput, type GazonNote,
 } from '@/lib/queries/gazon'
 import { uploadPhoto, photoUrl, deletePhoto } from '@/lib/storage'
@@ -321,11 +321,13 @@ function GazonRun() {
     setOptimize(next)
   }
 
-  // itinéraire : les reprises d'abord, puis les terrains restants, dans l'ordre affiché
-  const routeUrl = useMemo(() => {
+  // Itinéraire : les reprises d'abord, puis les terrains restants, dans l'ordre
+  // affiché. Découpé en segments de 10 arrêts (limite du deep link Google Maps).
+  // Recalculé sur les terrains RESTANTS : cocher FAIT fait avancer les segments.
+  const segments = useMemo(() => {
     const pending = dueList.filter((t) => !t.a_eviter && !passages.get(t.id))
-    if (optimize && optOrder.size) return gazonRouteUrl(pending) // Google a déjà tout ordonné
-    return gazonRouteUrl([...retakes.map((r) => r.t), ...pending.filter((t) => !retakeIds.has(t.id))])
+    if (optimize && optOrder.size) return gazonRouteSegments(pending) // Google a déjà tout ordonné
+    return gazonRouteSegments([...retakes.map((r) => r.t), ...pending.filter((t) => !retakeIds.has(t.id))])
   }, [dueList, passages, retakes, retakeIds, optimize, optOrder])
 
   const toggle = async (t: GazonTerrain, status: 'fait' | 'evite') => {
@@ -425,12 +427,48 @@ function GazonRun() {
             {!optLoading && !optimize && 'Ordre manuel'}
           </span>
           <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
-            {routeUrl && (
-              <a href={routeUrl} target="_blank" rel="noopener noreferrer" title={`Retour au shop à la fin (${SHOP_ADDRESS})`} style={{ ...addBtn, textDecoration: 'none', background: GREEN, color: '#FFF' }}>
-                <Route size={15} />Itinéraire restant
+            {segments.length > 0 && (
+              <a
+                href={segments[0].url}
+                target="_blank"
+                rel="noopener noreferrer"
+                title={segments.length > 1
+                  ? `Les 10 premiers arrêts. Coche-les FAIT, puis reprends ce bouton pour les 10 suivants.`
+                  : `Retour au shop à la fin (${SHOP_ADDRESS})`}
+                style={{ ...addBtn, textDecoration: 'none', background: GREEN, color: '#FFF' }}
+              >
+                <Route size={15} />
+                {segments.length > 1 ? `Itinéraire · arrêts ${segments[0].from}–${segments[0].to}` : 'Itinéraire restant'}
               </a>
             )}
             {admin && <button onClick={startEdit} style={{ ...addBtn, background: '#F3F4F6', color: '#374151' }}><Pencil size={15} />Réordonner</button>}
+          </div>
+        </div>
+      )}
+
+      {/* Google Maps plafonne un trajet à 10 arrêts : on découpe la run en
+          parties et on l'explique noir sur blanc à l'équipe. */}
+      {view === 'run' && !editMode && segments.length > 1 && (
+        <div style={{ background: '#F6F7EE', border: `1px solid ${GREEN}33`, borderRadius: 10, padding: '10px 12px', marginBottom: 10 }}>
+          <div style={{ fontSize: 12, color: '#3F4A1E', lineHeight: 1.5, marginBottom: 8 }}>
+            <strong>Google Maps prend 10 arrêts à la fois.</strong> Fais les arrêts {segments[0].from}–{segments[0].to},
+            coche-les <strong>FAIT</strong>, puis reprends le bouton vert : il te donnera les 10 suivants automatiquement.
+            Ou saute directement à une partie :
+          </div>
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            {segments.map((seg, i) => (
+              <a
+                key={i}
+                href={seg.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{ ...segBtn, ...(i === 0 ? { background: GREEN, color: '#FFF', borderColor: GREEN } : null) }}
+              >
+                {seg.from === 0
+                  ? 'Retour au shop'
+                  : `${i + 1}. Arrêts ${seg.from}–${seg.to}${seg.endsAtShop ? ' → shop' : ''}`}
+              </a>
+            ))}
           </div>
         </div>
       )}
@@ -1318,6 +1356,20 @@ const navBtn: React.CSSProperties = {
   display: 'flex', alignItems: 'center', justifyContent: 'center', width: 30, height: 30, borderRadius: 8,
   border: '1px solid #D1D5DB', background: '#FFF', cursor: 'pointer', color: '#374151',
 }
+const segBtn: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  padding: '7px 11px',
+  borderRadius: 8,
+  border: '1px solid #D8DCC4',
+  background: '#FFF',
+  color: '#3F4A1E',
+  fontSize: 12,
+  fontWeight: 600,
+  textDecoration: 'none',
+  whiteSpace: 'nowrap',
+}
+
 const addBtn: React.CSSProperties = {
   display: 'inline-flex', alignItems: 'center', gap: 6, padding: '8px 14px', borderRadius: 10,
   border: 'none', background: '#69C9CA', color: '#06363B', fontSize: 13, fontWeight: 700, cursor: 'pointer',
