@@ -6,13 +6,14 @@ import { searchClients, fullAddress, type Client } from '@/lib/queries/clients'
 import { GAZON_ROUTES, findRoute, routeLabel } from '@/lib/gazon-routes'
 import { autoFocusDesktop } from '@/lib/ui'
 import { PAY_MODES, PAY_MODE_BY_ID, autoPayMode, type PayMode } from '@/lib/payes'
-import { WINDOW_SERVICES, serviceByLabel } from '@/lib/services'
+import { WINDOW_SERVICES, servicesFromValue, freeServiceText, joinServiceValue } from '@/lib/services'
 import { JOB_STATUSES, jobStatusMeta, normalizeJobStatus } from '@/lib/job-status'
 import type { Lane, ProfileMini } from './WeekCalendar'
 import JobExtras from './JobExtras'
 import JobUpsells from './JobUpsells'
 import JobPayPanel from './JobPayPanel'
 import NewClientModal from './NewClientModal'
+import MultiPicker from '@/components/ui/MultiPicker'
 import { Trash2, Navigation, Phone, Play, UserPlus } from 'lucide-react'
 
 interface Props {
@@ -44,8 +45,6 @@ function timeInput(iso: string | null): string {
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
 }
 const TYPE_OPTIONS = [{ id: 'gazon', l: '🌿 Gazon (route)' }, { id: 'projet', l: '🔨 Projet' }]
-// valeur sentinelle du menu Service : bascule sur une saisie libre
-const AUTRE_SERVICE = '__autre__'
 const TYPE_LABELS: Record<string, string> = Object.fromEntries(TYPE_OPTIONS.map((t) => [t.id, t.l]))
 
 /** « 14:30 » + 2 h → « 16:30 » (borné à 23:59) */
@@ -66,10 +65,17 @@ export default function JobModal({ kind, canEdit = true, userId = null, lanes, a
   const [type, setType] = useState(job?.type ?? (kind === 'fenetre' ? 'fenetre' : 'gazon'))
   const [title, setTitle] = useState(job ? (clientName(job) || job.title || '') : '')
   const [service, setService] = useState(job?.service ?? '')
-  // Fenêtres : le service se choisit dans un menu déroulant (lib/services.ts).
-  // Une valeur hors catalogue (ancienne saisie libre) bascule sur « Autre ».
+  // Fenêtres : plusieurs services cochables dans le menu déroulant
+  // (lib/services.ts). Ce qui n'est pas au catalogue (ancienne saisie libre)
+  // atterrit dans le champ « Autre service ».
+  const [servicePicks, setServicePicks] = useState<string[]>(
+    () => (kind === 'fenetre' ? servicesFromValue(job?.service).map((s) => s.label) : []),
+  )
+  const [serviceOther, setServiceOther] = useState(
+    () => (kind === 'fenetre' ? freeServiceText(job?.service) : ''),
+  )
   const [serviceFree, setServiceFree] = useState(
-    kind === 'fenetre' && job?.service && !serviceByLabel(job.service) ? true : false,
+    () => kind === 'fenetre' && !!freeServiceText(job?.service),
   )
   // total des upsells enregistrés sur cette job (remonté par <JobUpsells>)
   const [upsellTotal, setUpsellTotal] = useState(0)
@@ -95,8 +101,13 @@ export default function JobModal({ kind, canEdit = true, userId = null, lanes, a
   const [error, setError] = useState('')
 
   const isGazon = kind === 'paysagement' && type === 'gazon'
+  // Valeur réellement stockée dans jobs.service : les services cochés joints
+  // par « + » (fenêtres), ou la saisie libre (projets de paysagement).
+  const serviceValue = kind === 'fenetre'
+    ? joinServiceValue(servicePicks, serviceFree ? serviceOther : '')
+    : service
   // mode déduit si l'admin laisse « Auto » (dépend du nb d'assignés → réactif)
-  const autoMode: PayMode = autoPayMode(type, service, assigned.length)
+  const autoMode: PayMode = autoPayMode(type, serviceValue, assigned.length)
   const effectiveMode: PayMode = (payMode as PayMode) || autoMode
 
   // --- autocomplétion client (fenêtres + projets) : taper un nom existant
@@ -166,7 +177,7 @@ export default function JobModal({ kind, canEdit = true, userId = null, lanes, a
     setSaving(true); setError('')
     const payload: JobInput = {
       title: isGazon ? routeLabel(routeName) : (title.trim() || (status === 'dispo' ? 'Dispo' : null)),
-      service: isGazon ? null : (service || null),
+      service: isGazon ? null : (serviceValue || null),
       type,
       team,
       assigned_ids: assigned,
@@ -280,6 +291,28 @@ export default function JobModal({ kind, canEdit = true, userId = null, lanes, a
                       background: '#FFF', border: '1px solid #E5E7EB', borderRadius: 10, overflow: 'hidden',
                       boxShadow: '0 8px 20px rgba(0,0,0,0.10)', maxHeight: 240, overflowY: 'auto',
                     }}>
+                      {/* « Ajouter nouveau » EN PREMIER : c'est le geste le plus
+                          fréquent quand on tape un nom qui n'existe pas encore */}
+                      {title.trim().length >= 2 && (
+                        <button
+                          type="button"
+                          onMouseDown={(e) => e.preventDefault()}
+                          onClick={() => { setShowSug(false); setNewClient(true) }}
+                          style={{
+                            display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left',
+                            padding: '10px', border: 'none', borderBottom: '1px solid #E5E7EB',
+                            background: '#69C9CA14', color: '#0E6B6E', cursor: 'pointer',
+                          }}
+                        >
+                          <UserPlus size={15} />
+                          <span style={{ fontSize: 13, fontWeight: 700 }}>
+                            Ajouter nouveau
+                            <span style={{ display: 'block', fontSize: 11, fontWeight: 500, color: '#6B7280' }}>
+                              « {title.trim()} » — enregistré dans le CRM et QuickBooks
+                            </span>
+                          </span>
+                        </button>
+                      )}
                       {suggestions.map((c) => (
                         <button
                           key={c.id}
@@ -294,50 +327,40 @@ export default function JobModal({ kind, canEdit = true, userId = null, lanes, a
                           )}
                         </button>
                       ))}
-                      {title.trim().length >= 2 && (
-                        <button
-                          type="button"
-                          onMouseDown={(e) => e.preventDefault()}
-                          onClick={() => { setShowSug(false); setNewClient(true) }}
-                          style={{
-                            display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left',
-                            padding: '10px', border: 'none', borderTop: '1px solid #E5E7EB',
-                            background: '#69C9CA14', color: '#0E6B6E', cursor: 'pointer',
-                          }}
-                        >
-                          <UserPlus size={15} />
-                          <span style={{ fontSize: 13, fontWeight: 700 }}>
-                            Ajouter nouveau
-                            <span style={{ display: 'block', fontSize: 11, fontWeight: 500, color: '#6B7280' }}>
-                              « {title.trim()} » — enregistré dans le CRM et QuickBooks
-                            </span>
-                          </span>
-                        </button>
-                      )}
                     </div>
                   )}
                 </div>
               </Field>
 
-              <Field label="Service">
+              <Field label={kind === 'fenetre' ? 'Services (plusieurs possibles)' : 'Service'}>
                 {kind === 'fenetre' ? (
-                  /* menu déroulant : le service choisi fixe aussi le mode de paye
-                     (ext. / int-ext) quand « Auto » est laissé plus bas. */
+                  /* menu déroulant à cases à cocher : une job peut cumuler
+                     plusieurs services (ext. + gouttières…). Les services
+                     cochés fixent aussi le mode de paye (int/ext l'emporte)
+                     quand « Commission (défaut) » est laissé plus bas. */
                   <>
-                    <select
-                      value={serviceFree ? AUTRE_SERVICE : service}
-                      onChange={(e) => {
-                        if (e.target.value === AUTRE_SERVICE) { setServiceFree(true); setService('') }
-                        else { setServiceFree(false); setService(e.target.value) }
-                      }}
-                      style={inp}
-                    >
-                      <option value="">— Choisir un service —</option>
-                      {WINDOW_SERVICES.map((s) => <option key={s.id} value={s.label}>{s.label}</option>)}
-                      <option value={AUTRE_SERVICE}>Autre service…</option>
-                    </select>
+                    <MultiPicker
+                      options={WINDOW_SERVICES.map((s) => ({ id: s.label, label: s.label }))}
+                      selected={servicePicks}
+                      onChange={setServicePicks}
+                      placeholder="— Choisir un ou plusieurs services —"
+                      summary={serviceValue}
+                      footer={
+                        <button
+                          type="button"
+                          onClick={() => setServiceFree((v) => !v)}
+                          style={{
+                            display: 'block', width: '100%', textAlign: 'left', padding: '9px 10px',
+                            border: 'none', borderTop: '1px solid #E5E7EB', background: serviceFree ? '#69C9CA14' : '#F9FAFB',
+                            color: '#0E6B6E', fontSize: 12, fontWeight: 700, cursor: 'pointer',
+                          }}
+                        >
+                          {serviceFree ? '− Retirer le service libre' : '+ Autre service…'}
+                        </button>
+                      }
+                    />
                     {serviceFree && (
-                      <input value={service} onChange={(e) => setService(e.target.value)} style={{ ...inp, marginTop: 6 }} placeholder="Décrire le service" />
+                      <input value={serviceOther} onChange={(e) => setServiceOther(e.target.value)} style={{ ...inp, marginTop: 6 }} placeholder="Décrire le service" />
                     )}
                   </>
                 ) : (
@@ -400,18 +423,20 @@ export default function JobModal({ kind, canEdit = true, userId = null, lanes, a
 
           {!isGazon && (
             <Field label="Mode de paye">
-              {/* deux choix au quotidien : commission (défaut) ou taux horaire
-                  copro/commercial. Le détail (solo / ext / int-ext) se déduit
-                  du service et du nombre d'assignés, et reste forçable en bas. */}
+              {/* trois choix au quotidien : commission (défaut), copro/commercial
+                  à l'heure, paysagement à l'heure. Le détail de la commission
+                  (solo / ext / int-ext) se déduit des services et du nombre
+                  d'assignés, et reste forçable dans le sous-menu. */}
               <select value={payMode} onChange={(e) => setPayMode(e.target.value)} style={inp}>
                 <option value="">
                   {PAY_MODE_BY_ID[autoMode].kind === 'percent'
                     ? `💰 Commission (défaut) — ${PAY_MODE_BY_ID[autoMode].short}`
-                    : `⏱ Horaire paysagement (défaut)`}
+                    : `🌿 Paysagement — à l'heure (défaut)`}
                 </option>
                 <option value="commercial">🏢 Copropriété / Commercial — à l&apos;heure</option>
+                <option value="horaire">🌿 Paysagement — à l&apos;heure</option>
                 <optgroup label="Forcer un taux précis">
-                  {PAY_MODES.filter((m) => m.id !== 'commercial').map((m) => (
+                  {PAY_MODES.filter((m) => m.kind === 'percent').map((m) => (
                     <option key={m.id} value={m.id}>{m.label}</option>
                   ))}
                 </optgroup>
@@ -419,8 +444,8 @@ export default function JobModal({ kind, canEdit = true, userId = null, lanes, a
               <p style={{ margin: '5px 2px 0', fontSize: 11, color: '#9CA3AF', lineHeight: 1.45 }}>
                 {PAY_MODE_BY_ID[effectiveMode].kind === 'percent'
                   ? `Chaque technicien assigné touche son % ${PAY_MODE_BY_ID[effectiveMode].short.toLowerCase()} du prix complet.`
-                  : 'Payé aux heures pointées, pas au prix de la job.'}
-                {' '}Commission = solo si un seul assigné, sinon équipe (ext. ou int/ext selon le service).
+                  : `Payé aux heures pointées au taux ${effectiveMode === 'commercial' ? 'commercial' : 'paysagement'}, pas au prix de la job.`}
+                {' '}Commission = solo si un seul assigné, sinon équipe (ext. ou int/ext selon les services).
               </p>
             </Field>
           )}
@@ -501,7 +526,7 @@ export default function JobModal({ kind, canEdit = true, userId = null, lanes, a
         )}
         {isEdit && !isGazon && (
           <JobPayPanel
-            job={{ type, service, price: price ? Number(price) : null, pay_mode: payMode || null, assigned_ids: assigned }}
+            job={{ type, service: serviceValue, price: price ? Number(price) : null, pay_mode: payMode || null, assigned_ids: assigned }}
             soldBy={soldBy || null}
             upsellTotal={upsellTotal}
             userId={userId}

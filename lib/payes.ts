@@ -2,7 +2,7 @@
 // Payes — helpers semaine + constantes de rémunération (Phase 5).
 // >>> Règles de commission/bonus ajustables ICI <<<
 // ============================================================
-import { serviceByLabel } from './services'
+import { payModeForServiceValue } from './services'
 
 // Taux de commission des techniciens fenêtres (repli si l'employé n'a
 // aucune grille de paye définie sur son profil).
@@ -86,9 +86,10 @@ export const PAY_MODE_BY_ID = Object.fromEntries(PAY_MODES.map((m) => [m.id, m])
 export function autoPayMode(type: string | null, service: string | null, assignedCount: number): PayMode {
   if (type !== 'fenetre') return 'horaire'
   if (assignedCount <= 1) return 'solo'
-  // service choisi dans le menu déroulant → son mode est explicite
-  const known = serviceByLabel(service)
-  if (known) return known.payMode
+  // services choisis dans le menu déroulant → leur mode est explicite
+  // (plusieurs services : int/ext l'emporte, cf. payModeForServiceValue)
+  const known = payModeForServiceValue(service)
+  if (known) return known
   // ancienne saisie libre → on devine sur le texte
   const s = (service ?? '').toLowerCase()
   const hasInt = /int(é|e)rieur|\bint\b/.test(s)
@@ -99,6 +100,21 @@ export function autoPayMode(type: string | null, service: string | null, assigne
 // le calcul du % des techniciens ? true = le tech est payé sur le total
 // réellement encaissé (le vendeur touche en plus sa commission de vente).
 export const UPSELL_COUNTS_IN_JOB_BASE = true
+
+// Vendeurs crédités d'un upsell. Plusieurs vendeurs (sold_by_ids, cf.
+// migration_crm_upsell_vendeurs) → la vente est SPLITTÉE également entre eux.
+// Repli sur l'ancienne colonne sold_by tant que la migration n'est pas passée.
+export function upsellSellers(u: { sold_by?: string | null; sold_by_ids?: string[] | null }): string[] {
+  const many = (u.sold_by_ids ?? []).filter(Boolean)
+  if (many.length) return [...new Set(many)]
+  return u.sold_by ? [u.sold_by] : []
+}
+
+/** Part d'un upsell revenant à CHAQUE vendeur crédité (split égal). */
+export function upsellShare(price: number | null, sellers: string[]): number {
+  if (!sellers.length) return 0
+  return (Number(price) || 0) / sellers.length
+}
 
 // Ce qu'une job verse à UN employé assigné (le % est versé PAR technicien
 // sur le prix complet — cf. technicien.txt : « 350 $ → 63 $ » = 18 % du total).

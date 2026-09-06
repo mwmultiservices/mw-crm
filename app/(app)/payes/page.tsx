@@ -13,6 +13,7 @@ import {
   payRatesOf, jobPayFor, hourlyRateFor, PAY_MODE_BY_ID, EMPTY_RATES, WORK_TYPES, UPSELL_COUNTS_IN_JOB_BASE,
   type PayRates,
 } from '@/lib/payes'
+import MyJobsEarnings from '@/components/payes/MyJobsEarnings'
 import { ChevronLeft, ChevronRight, RefreshCw, Check, Send } from 'lucide-react'
 
 export default function PayesPage() {
@@ -460,6 +461,14 @@ function PersoPayes({ profileId, role }: { profileId: string; role: string }) {
 
       {loading ? <div style={{ padding: 40, textAlign: 'center', color: '#9CA3AF' }}>Chargement…</div> : (
         <>
+          {/* jobs assignées → direct dans ma catégorie de paye (temps réel) */}
+          <SectionTitle>Mes jobs de la semaine</SectionTitle>
+          <Card>
+            <div style={{ padding: 16 }}>
+              <MyJobsEarnings profileId={profileId} weekOf={weekOf} rates={rates} />
+            </div>
+          </Card>
+
           {/* commissions (rep/tech) */}
           {!isTerrain && (
             <>

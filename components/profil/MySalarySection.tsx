@@ -10,6 +10,7 @@ import {
   money2, WORK_TYPES, hourlyRateFor,
 } from '@/lib/payes'
 import SettingsSection from './SettingsSection'
+import MyJobsEarnings from '@/components/payes/MyJobsEarnings'
 import { ChevronLeft, ChevronRight, Wallet } from 'lucide-react'
 
 // ============================================================
@@ -108,6 +109,14 @@ export default function MySalarySection({ profile }: Props) {
           Rien d&apos;enregistré pour cette semaine.
         </p>
       )}
+
+      {/* ── jobs assignées : direct dans ma catégorie de paye ─────────── */}
+      <div style={{ fontSize: 11, fontWeight: 700, color: '#6B7280', textTransform: 'uppercase', letterSpacing: '0.06em', margin: '0 0 8px' }}>
+        Mes jobs de la semaine
+      </div>
+      <div style={{ marginBottom: 16 }}>
+        <MyJobsEarnings profileId={profile.id} weekOf={weekOf} rates={rates} />
+      </div>
 
       <Link href="/payes" style={{
         display: 'block', textAlign: 'center', padding: '9px 12px', borderRadius: 10,

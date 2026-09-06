@@ -5,14 +5,18 @@ import {
   type JobUpsell, type AssignProfile,
 } from '@/lib/queries/calendar'
 import { UPSELL_SERVICES } from '@/lib/services'
-import { money2 } from '@/lib/payes'
+import { money2, upsellSellers, upsellShare } from '@/lib/payes'
+import MultiPicker from '@/components/ui/MultiPicker'
 import { Plus, X, TrendingUp } from 'lucide-react'
 
 // ============================================================
 // Ventes additionnelles (« upsells ») faites pendant une job.
 // Comme JobExtras, ce bloc vit HORS du <fieldset disabled> du JobModal :
 // c'est le technicien sur place — pas seulement l'admin — qui enregistre
-// le service ajouté et désigne le vendeur qui a conclu la vente.
+// le service ajouté et désigne le ou les vendeurs qui ont conclu la vente.
+//
+// PLUSIEURS vendeurs : la vente est SPLITTÉE également entre eux (chacun
+// touche son % de vente sur SA part). Cf. upsellSellers/upsellShare.
 // ============================================================
 
 interface Props {
@@ -35,7 +39,7 @@ export default function JobUpsells({ jobId, userId, isAdmin, onTotalChange }: Pr
   const [service, setService] = useState(UPSELL_SERVICES[0]?.label ?? '')
   const [custom, setCustom] = useState('')
   const [price, setPrice] = useState('')
-  const [seller, setSeller] = useState<string>(userId ?? '')
+  const [sellers, setSellers] = useState<string[]>(userId ? [userId] : [])
   const [saving, setSaving] = useState(false)
 
   useEffect(() => {
@@ -70,15 +74,18 @@ export default function JobUpsells({ jobId, userId, isAdmin, onTotalChange }: Pr
     if (!label) { setError('Service requis.'); return }
     const amount = Number(price)
     if (!amount || amount <= 0) { setError('Prix requis.'); return }
+    const picked = sellers.length ? sellers : (userId ? [userId] : [])
+    if (picked.length === 0) { setError('Choisir au moins un vendeur.'); return }
     setSaving(true); setError('')
     const { error: e } = await addJobUpsell({
       job_id: jobId, service: label, price: amount,
-      sold_by: seller || userId, created_by: userId,
+      // sold_by reste le 1er vendeur : lisible même sans la migration
+      sold_by: picked[0], sold_by_ids: picked, created_by: userId,
     })
     setSaving(false)
     if (e) { setError(e); return }
     setService(UPSELL_SERVICES[0]?.label ?? ''); setCustom(''); setPrice('')
-    setSeller(userId ?? ''); setShowForm(false)
+    setSellers(userId ? [userId] : []); setShowForm(false)
     refresh()
   }
 
@@ -90,6 +97,11 @@ export default function JobUpsells({ jobId, userId, isAdmin, onTotalChange }: Pr
   }
 
   const total = upsells.reduce((s, x) => s + (Number(x.price) || 0), 0)
+  const sellerOptions = team.map((p) => ({
+    id: p.id,
+    label: `${p.full_name ?? '—'}${p.id === userId ? ' (moi)' : ''}`,
+  }))
+  const share = sellers.length > 1 ? (Number(price) || 0) / sellers.length : 0
 
   return (
     <div style={{ marginTop: 14, borderTop: '1px solid #E5E7EB', paddingTop: 12 }}>
@@ -107,26 +119,33 @@ export default function JobUpsells({ jobId, userId, isAdmin, onTotalChange }: Pr
 
       {upsells.length === 0 && !showForm && (
         <p style={{ margin: '2px 0 0', fontSize: 11, color: '#9CA3AF', lineHeight: 1.45 }}>
-          Un service ajouté sur place (gouttières, intérieur…) : le vendeur choisi touche sa commission de vente.
+          Un service ajouté sur place (gouttières, intérieur…) : le ou les vendeurs choisis touchent leur commission de vente.
         </p>
       )}
 
-      {upsells.map((x) => (
-        <div key={x.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 0', borderTop: '1px solid #F3F4F6', fontSize: 13 }}>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <span style={{ fontWeight: 600, color: '#111827' }}>{x.service}</span>
-            <span style={{ display: 'block', fontSize: 11, color: '#9CA3AF' }}>
-              {nameOf(x.sold_by) ? `vendu par ${nameOf(x.sold_by)}${x.sold_by === userId ? ' (moi)' : ''}` : 'vendeur non précisé'}
-            </span>
+      {upsells.map((x) => {
+        const ids = upsellSellers(x)
+        const names = ids.map((id) => `${nameOf(id) ?? '—'}${id === userId ? ' (moi)' : ''}`)
+        const part = upsellShare(x.price, ids)
+        return (
+          <div key={x.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 0', borderTop: '1px solid #F3F4F6', fontSize: 13 }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <span style={{ fontWeight: 600, color: '#111827' }}>{x.service}</span>
+              <span style={{ display: 'block', fontSize: 11, color: '#9CA3AF' }}>
+                {names.length === 0
+                  ? 'vendeur non précisé'
+                  : `vendu par ${names.join(' + ')}${ids.length > 1 ? ` · ${money2(part)} chacun` : ''}`}
+              </span>
+            </div>
+            <strong style={{ color: '#0D6E6F', whiteSpace: 'nowrap' }}>{money2(Number(x.price) || 0)}</strong>
+            {(isAdmin || x.created_by === userId) && (
+              <button onClick={() => remove(x)} aria-label="Supprimer" style={{ border: 'none', background: 'none', color: '#DC2626', cursor: 'pointer', display: 'inline-flex', padding: 2 }}>
+                <X size={13} />
+              </button>
+            )}
           </div>
-          <strong style={{ color: '#0D6E6F', whiteSpace: 'nowrap' }}>{money2(Number(x.price) || 0)}</strong>
-          {(isAdmin || x.created_by === userId) && (
-            <button onClick={() => remove(x)} aria-label="Supprimer" style={{ border: 'none', background: 'none', color: '#DC2626', cursor: 'pointer', display: 'inline-flex', padding: 2 }}>
-              <X size={13} />
-            </button>
-          )}
-        </div>
-      ))}
+        )
+      })}
 
       {showForm && (
         <div style={{ background: '#F9FAFB', borderRadius: 10, padding: 10, marginTop: 8, display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -140,15 +159,22 @@ export default function JobUpsells({ jobId, userId, isAdmin, onTotalChange }: Pr
           {service === AUTRE && (
             <input value={custom} onChange={(e) => setCustom(e.target.value)} placeholder="Nom du service vendu" style={inp} />
           )}
-          <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, fontWeight: 700, color: '#6B7280' }}>
-            Vendu par
-            <select value={seller} onChange={(e) => setSeller(e.target.value)} style={{ ...inp, flex: 1 }}>
-              {!userId && <option value="">—</option>}
-              {team.map((p) => (
-                <option key={p.id} value={p.id}>{p.full_name ?? '—'}{p.id === userId ? ' (moi)' : ''}</option>
-              ))}
-            </select>
-          </label>
+          <div>
+            <span style={{ display: 'block', fontSize: 12, fontWeight: 700, color: '#6B7280', marginBottom: 4 }}>
+              Vendu par {sellers.length > 1 ? `(${sellers.length} vendeurs — split)` : ''}
+            </span>
+            <MultiPicker
+              options={sellerOptions}
+              selected={sellers}
+              onChange={setSellers}
+              placeholder="— Choisir le ou les vendeurs —"
+            />
+            {sellers.length > 1 && (
+              <p style={{ margin: '4px 2px 0', fontSize: 11, color: '#9CA3AF' }}>
+                Vente partagée : {money2(share)} chacun{Number(price) > 0 ? '' : ' (une fois le prix entré)'}.
+              </p>
+            )}
+          </div>
           <div style={{ display: 'flex', gap: 8 }}>
             <button onClick={() => { setShowForm(false); setError('') }} style={{ marginLeft: 'auto', padding: '7px 12px', borderRadius: 8, border: 'none', background: '#F3F4F6', color: '#374151', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>Annuler</button>
             <button onClick={save} disabled={saving} style={{ padding: '7px 12px', borderRadius: 8, border: 'none', background: '#69C9CA', color: '#06363B', fontSize: 12, fontWeight: 700, cursor: 'pointer', opacity: saving ? 0.6 : 1 }}>{saving ? '…' : 'Ajouter'}</button>

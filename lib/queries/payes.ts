@@ -2,6 +2,7 @@ import { supabase } from '@/lib/supabase'
 import {
   repBonus, weekRangeISO, addWeeks, hoursBetween,
   payRatesOf, jobPayFor, hourlyRateFor, PAY_MODE_BY_ID, UPSELL_COUNTS_IN_JOB_BASE, autoPayMode,
+  upsellSellers, upsellShare,
   type PayRates, type PayMode,
 } from '@/lib/payes'
 
@@ -77,17 +78,21 @@ export interface WeekUpsell {
   service: string
   price: number
   sold_by: string | null
+  // vendeurs multiples (migration_crm_upsell_vendeurs) — vente splittée
+  sold_by_ids?: string[] | null
   jobs?: { start_at: string | null; status: string | null } | null
 }
 
 // Upsells rattachés à une job de la période (hors jobs annulées).
 // Table absente (migration_crm_vitres_upsell pas appliquée) → [].
+// `*` plutôt qu'une liste de colonnes : sold_by_ids n'existe qu'une fois
+// migration_crm_upsell_vendeurs appliquée.
 export async function getUpsellsWeek(weekOf: string, weeks = 1): Promise<WeekUpsell[]> {
   const { startISO } = weekRangeISO(weekOf)
   const { endISO } = weekRangeISO(addWeeks(weekOf, weeks - 1))
   const { data } = await supabase
     .from('job_upsells')
-    .select('id, job_id, service, price, sold_by, jobs!inner(start_at, status)')
+    .select('*, jobs!inner(start_at, status)')
     .gte('jobs.start_at', startISO)
     .lt('jobs.start_at', endISO)
     .neq('jobs.status', 'canceled')
@@ -152,13 +157,18 @@ export async function computeCommissions(weekOf: string): Promise<{ reps: number
     repAgg.set(l.rep_id, a)
   }
 
-  // un upsell vendu sur le chantier compte comme une vente du vendeur désigné
+  // un upsell vendu sur le chantier compte comme une vente du/des vendeur(s)
+  // désigné(s) — à plusieurs, le montant est splitté également entre eux
   for (const u of upsells) {
-    if (!u.sold_by) continue
-    const a = repAgg.get(u.sold_by) ?? { base: 0, deals: 0 }
-    a.base += Number(u.price) || 0
-    a.deals += 1
-    repAgg.set(u.sold_by, a)
+    const sellers = upsellSellers(u)
+    if (!sellers.length) continue
+    const share = upsellShare(u.price, sellers)
+    for (const s of sellers) {
+      const a = repAgg.get(s) ?? { base: 0, deals: 0 }
+      a.base += share
+      a.deals += 1
+      repAgg.set(s, a)
+    }
   }
 
   // vendeur (« closer ») désigné sur une job complétée (vitres ou projet) :
@@ -280,6 +290,127 @@ export async function getDoneJobs(weekOf: string, weeks = 1): Promise<DoneJobRow
     .lt('start_at', endISO)
     .order('start_at', { ascending: true })
   return (data as DoneJobRow[]) ?? []
+}
+
+// --- MES JOBS DE LA SEMAINE (vue employé, sans attendre le calcul admin) ---
+// « Les jobs assignées aux gars vont direct dans leur catégorie de paye » :
+// dès qu'une job est assignée (ou vendue) par un employé, elle apparaît chez
+// lui, classée dans la bonne catégorie — commission de vitres, commission de
+// vente, ou heures (payées au pointage). Le calcul admin (computeCommissions)
+// reste la source officielle : ici on montre la MÊME règle, en direct.
+export interface MyJobEarning {
+  key: string
+  job_id: string
+  title: string | null
+  service: string | null
+  type: string | null
+  start_at: string | null
+  done: boolean
+  /** à quel titre l'employé est payé sur cette ligne */
+  as: 'technicien' | 'vendeur'
+  category: 'commission' | 'heures'
+  mode: PayMode
+  rate: number
+  base: number
+  /** 0 pour les lignes « heures » : elles se paient au pointage */
+  amount: number
+}
+
+export interface MyJobEarnings {
+  lines: MyJobEarning[]
+  /** commissions des jobs déjà « done » (ce qui est acquis) */
+  doneTotal: number
+  /** commissions des jobs de la semaine pas encore « done » */
+  upcomingTotal: number
+  /** nb de jobs payées à l'heure (pas de montant : voir le pointage) */
+  hourlyJobs: number
+}
+
+export async function getMyJobEarnings(
+  profileId: string, weekOf: string, rates: PayRates, weeks = 1,
+): Promise<MyJobEarnings> {
+  const { startISO } = weekRangeISO(weekOf)
+  const { endISO } = weekRangeISO(addWeeks(weekOf, weeks - 1))
+  const inWeek = () => supabase
+    .from('jobs').select('*')
+    .gte('start_at', startISO).lt('start_at', endISO).neq('status', 'canceled')
+
+  const [assignedRes, soldRes, upsells] = await Promise.all([
+    inWeek().contains('assigned_ids', [profileId]),
+    // jobs.sold_by : colonne récente — absente = requête en erreur, on l'ignore
+    inWeek().eq('sold_by', profileId),
+    getUpsellsWeek(weekOf, weeks),
+  ])
+
+  type Row = {
+    id: string; title: string | null; service: string | null; type: string | null
+    start_at: string | null; status: string | null; price: number | null
+    pay_mode?: string | null; assigned_ids?: string[] | null
+    sold_by?: string | null; lead_id?: string | null
+  }
+  const assigned = (assignedRes.data as Row[]) ?? []
+  const sold = (soldRes.data as Row[]) ?? []
+
+  const upsellByJob = new Map<string, number>()
+  for (const u of upsells) {
+    upsellByJob.set(u.job_id, (upsellByJob.get(u.job_id) ?? 0) + (Number(u.price) || 0))
+  }
+
+  const lines: MyJobEarning[] = []
+
+  // 1. comme technicien assigné
+  for (const j of assigned) {
+    const extra = UPSELL_COUNTS_IN_JOB_BASE ? (upsellByJob.get(j.id) ?? 0) : 0
+    const base = (Number(j.price) || 0) + extra
+    const { mode, amount, rate } = jobPayFor({ ...j, price: base }, rates)
+    const hourly = PAY_MODE_BY_ID[mode]?.kind !== 'percent'
+    lines.push({
+      key: `job:${j.id}`, job_id: j.id, title: j.title, service: j.service, type: j.type,
+      start_at: j.start_at, done: j.status === 'done', as: 'technicien',
+      category: hourly ? 'heures' : 'commission',
+      mode, rate: hourly ? 0 : rate, base, amount: hourly ? 0 : amount,
+    })
+  }
+
+  // 2. comme vendeur (« closer ») de la job — même règle que computeCommissions :
+  //    une job issue d'un lead gagné est déjà payée sur le lead, on l'ignore
+  for (const j of sold) {
+    if (j.lead_id) continue
+    const base = Number(j.price) || 0
+    lines.push({
+      key: `sold:${j.id}`, job_id: j.id, title: j.title, service: j.service, type: j.type,
+      start_at: j.start_at, done: j.status === 'done', as: 'vendeur',
+      category: 'commission', mode: 'solo', rate: rates.pct_vente, base,
+      amount: Math.round(base * rates.pct_vente) / 100,
+    })
+  }
+
+  // 3. upsells vendus par lui (splittés s'ils ont plusieurs vendeurs)
+  const jobById = new Map<string, Row>([...assigned, ...sold].map((j) => [j.id, j]))
+  for (const u of upsells) {
+    const sellers = upsellSellers(u)
+    if (!sellers.includes(profileId)) continue
+    const share = upsellShare(u.price, sellers)
+    const j = jobById.get(u.job_id)
+    lines.push({
+      key: `upsell:${u.id}`, job_id: u.job_id, title: u.service, service: u.service,
+      type: j?.type ?? null, start_at: j?.start_at ?? u.jobs?.start_at ?? null,
+      done: (j?.status ?? u.jobs?.status) === 'done', as: 'vendeur',
+      category: 'commission', mode: 'solo', rate: rates.pct_vente, base: share,
+      amount: Math.round(share * rates.pct_vente) / 100,
+    })
+  }
+
+  lines.sort((a, b) => (a.start_at ?? '').localeCompare(b.start_at ?? ''))
+  const sum = (f: (l: MyJobEarning) => boolean) =>
+    Math.round(lines.filter(f).reduce((s, l) => s + l.amount, 0) * 100) / 100
+
+  return {
+    lines,
+    doneTotal: sum((l) => l.done && l.category === 'commission'),
+    upcomingTotal: sum((l) => !l.done && l.category === 'commission'),
+    hourlyJobs: lines.filter((l) => l.category === 'heures').length,
+  }
 }
 
 // --- TIMESHEETS / HEURES (admin) -------------------------------------------

@@ -229,6 +229,9 @@ export interface JobUpsell {
   service: string
   price: number
   sold_by: string | null
+  /** vendeurs crédités quand la vente est à plusieurs (split égal).
+   *  Colonne récente : migration_crm_upsell_vendeurs.sql */
+  sold_by_ids?: string[] | null
   created_by: string | null
   notes: string | null
   created_at: string
@@ -244,9 +247,17 @@ export async function getJobUpsells(jobId: string): Promise<{ upsells: JobUpsell
 }
 
 export async function addJobUpsell(input: {
-  job_id: string; service: string; price: number; sold_by: string | null; created_by: string | null; notes?: string | null
+  job_id: string; service: string; price: number; sold_by: string | null
+  sold_by_ids?: string[]; created_by: string | null; notes?: string | null
 }): Promise<{ error: string | null }> {
   const { error } = await supabase.from('job_upsells').insert(input)
+  if (error && input.sold_by_ids) {
+    // colonne sold_by_ids absente (migration_crm_upsell_vendeurs pas appliquée)
+    // → on enregistre au moins la vente, créditée au 1er vendeur choisi
+    const { sold_by_ids: _ignored, ...legacy } = input
+    const retry = await supabase.from('job_upsells').insert(legacy)
+    return { error: retry.error?.message ?? null }
+  }
   return { error: error?.message ?? null }
 }
 
