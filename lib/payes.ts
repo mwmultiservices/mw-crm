@@ -118,17 +118,27 @@ export function upsellShare(price: number | null, sellers: string[]): number {
 
 // Ce qu'une job verse à UN employé assigné (le % est versé PAR technicien
 // sur le prix complet — cf. technicien.txt : « 350 $ → 63 $ » = 18 % du total).
+//
+// Mode HORAIRE (copropriété/commercial, paysagement) : le montant vient du
+// « temps de la job » saisi par l'admin (jobs.pay_hours) × son taux horaire.
+// Sans temps saisi → 0 : la paye passe alors par les heures pointées.
+// `rate` est un % en mode pourcentage, un $/h en mode horaire.
 export function jobPayFor(
-  job: { type: string | null; service: string | null; price: number | null; pay_mode?: string | null; assigned_ids?: string[] | null },
+  job: {
+    type: string | null; service: string | null; price: number | null
+    pay_mode?: string | null; assigned_ids?: string[] | null; pay_hours?: number | null
+  },
   rates: PayRates,
-): { mode: PayMode; amount: number; rate: number } {
+): { mode: PayMode; amount: number; rate: number; hours: number } {
   const count = job.assigned_ids?.length ?? 0
   const mode = (job.pay_mode as PayMode) || autoPayMode(job.type, job.service, count)
   const meta = PAY_MODE_BY_ID[mode] ?? PAY_MODE_BY_ID.solo
   const rate = rates[meta.rate]
-  // Les modes horaires sont payés via les feuilles de temps, pas via la job.
-  const amount = meta.kind === 'percent' ? ((Number(job.price) || 0) * rate) / 100 : 0
-  return { mode, amount: Math.round(amount * 100) / 100, rate }
+  const hours = meta.kind === 'hourly' ? Number(job.pay_hours) || 0 : 0
+  const amount = meta.kind === 'percent'
+    ? ((Number(job.price) || 0) * rate) / 100
+    : hours * rate
+  return { mode, amount: Math.round(amount * 100) / 100, rate, hours }
 }
 
 // ---- Heures ------------------------------------------------------------

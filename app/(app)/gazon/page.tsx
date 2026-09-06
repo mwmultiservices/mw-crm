@@ -27,6 +27,13 @@ const SEASON_START = '2026-05-04'
 
 const GREEN = '#697035'
 const ORANGE = '#B45309'
+
+// Raisons d'évitement les plus fréquentes — un tap au lieu de taper au clavier
+// sur le terrain. >>> Ajuster la liste ICI <<<
+const EVITE_REASONS = [
+  'Barrière barrée', 'Chien dans la cour', 'Auto stationnée',
+  'Travaux en cours', 'Trop mouillé', 'Client absent',
+]
 const TEAL = '#0E6B6E'
 
 // Préférence « Optimiser » — par appareil (chaque camion garde son choix).
@@ -119,7 +126,8 @@ function GazonRun() {
   const [view, setView] = useState<'run' | 'datasheet'>('run')
   const [groupFilter, setGroupFilter] = useState<string>('Tous') // id de route (ou secteur orphelin)
   const [modal, setModal] = useState<{ terrain?: GazonTerrain } | null>(null) // {} = nouveau
-  const [noteFor, setNoteFor] = useState<GazonTerrain | null>(null)
+  // `why` = ouvert juste après un « À éviter » → on demande la raison
+  const [noteFor, setNoteFor] = useState<{ terrain: GazonTerrain; why?: boolean } | null>(null)
   const [reportOpen, setReportOpen] = useState(false)
   const [showNotDue, setShowNotDue] = useState(false)
 
@@ -363,12 +371,16 @@ function GazonRun() {
 
   const toggle = async (t: GazonTerrain, status: 'fait' | 'evite') => {
     const current = passages.get(t.id)
+    const undo = current?.status === status
     // maj optimiste
     const next = new Map(passages)
-    if (current?.status === status) next.delete(t.id)
+    if (undo) next.delete(t.id)
     else next.set(t.id, { id: 'tmp', terrain_id: t.id, week_of: weekOf, status, note: null, done_by: userId, done_at: new Date().toISOString() })
     setPassages(next)
-    const { error } = current?.status === status
+    // « À éviter » sans explication ne sert à rien au bureau : on ouvre tout de
+    // suite la note du jour pour que l'employé dise POURQUOI il a sauté le terrain.
+    if (!undo && status === 'evite') setNoteFor({ terrain: t, why: true })
+    const { error } = undo
       ? await clearPassage(t.id, weekOf)
       : await setPassage(t.id, weekOf, status, userId)
     if (error) loadPassages(weekOf)
@@ -413,7 +425,7 @@ function GazonRun() {
     notes: notes.get(t.id) ?? [],
     onToggle: toggle,
     onOpen: () => setModal({ terrain: t }),
-    onNote: () => setNoteFor(t),
+    onNote: () => setNoteFor({ terrain: t }),
   })
 
   return (
@@ -639,9 +651,10 @@ function GazonRun() {
 
       {noteFor && (
         <NoteModal
-          terrain={noteFor}
+          terrain={noteFor.terrain}
+          why={noteFor.why}
           day={today}
-          notes={notes.get(noteFor.id) ?? []}
+          notes={notes.get(noteFor.terrain.id) ?? []}
           userId={userId}
           admin={admin}
           tableMissing={notesError}
@@ -1025,8 +1038,10 @@ function SecteurRows({ secteur, terrains, weeks, weekOf, byKey }: {
 // ============================================================
 // Note du jour — un employé documente ce qu'il a vu sur le terrain
 // ============================================================
-function NoteModal({ terrain, day, notes, userId, admin, tableMissing, onClose, onSaved }: {
+function NoteModal({ terrain, why, day, notes, userId, admin, tableMissing, onClose, onSaved }: {
   terrain: GazonTerrain
+  /** ouvert juste après un « À éviter » : on demande la raison */
+  why?: boolean
   day: string
   notes: GazonNote[]
   userId: string | null
@@ -1047,6 +1062,7 @@ function NoteModal({ terrain, day, notes, userId, admin, tableMissing, onClose, 
     if (e) { setError(e); return }
     setText('')
     onSaved()
+    if (why) onClose() // saisi depuis « À éviter » : on repart tout de suite dans la run
   }
 
   const remove = async (n: GazonNote) => {
@@ -1057,8 +1073,15 @@ function NoteModal({ terrain, day, notes, userId, admin, tableMissing, onClose, 
   }
 
   return (
-    <Modal onClose={onClose} title={`Note du jour — ${terrain.name}`}>
+    <Modal onClose={onClose} title={why ? `Pourquoi éviter — ${terrain.name}` : `Note du jour — ${terrain.name}`}>
       <div style={{ fontSize: 12, color: '#9CA3AF', marginBottom: 10 }}>{longDate(day)}</div>
+
+      {why && (
+        <div style={{ background: ORANGE + '14', border: `1px solid ${ORANGE}55`, color: '#92400E', padding: '10px 12px', borderRadius: 10, fontSize: 12.5, marginBottom: 10, lineHeight: 1.45 }}>
+          Terrain marqué <strong>À ÉVITER</strong>. Dis en deux mots pourquoi — le bureau
+          verra la raison dans le rapport du jour.
+        </div>
+      )}
 
       {tableMissing && (
         <div style={{ background: '#FEF3C7', color: '#92400E', padding: 10, borderRadius: 10, fontSize: 12, marginBottom: 10 }}>
@@ -1086,15 +1109,31 @@ function NoteModal({ terrain, day, notes, userId, admin, tableMissing, onClose, 
 
       <textarea
         value={text} onChange={(e) => setText(e.target.value)} autoFocus={autoFocusDesktop()}
-        placeholder="Ex. : barrière barrée, chien dans la cour, gazon très long, bordure à refaire…"
+        placeholder={why
+          ? 'Ex. : barrière barrée, chien dans la cour, auto stationnée sur le terrain…'
+          : 'Ex. : barrière barrée, chien dans la cour, gazon très long, bordure à refaire…'}
         style={{ ...inp, minHeight: 90, resize: 'vertical' }}
       />
+
+      {why && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
+          {EVITE_REASONS.map((r) => (
+            <button key={r} onClick={() => setText(r)} style={{
+              padding: '5px 10px', borderRadius: 999, cursor: 'pointer', fontSize: 12, fontWeight: 600,
+              border: text === r ? `2px solid ${ORANGE}` : '1px solid #D1D5DB',
+              background: text === r ? ORANGE + '14' : '#FFF', color: '#374151',
+            }}>{r}</button>
+          ))}
+        </div>
+      )}
       {error && <div style={{ color: '#991B1B', fontSize: 13, marginTop: 8 }}>{error}</div>}
 
       <div style={{ display: 'flex', gap: 8, marginTop: 14 }}>
-        <button onClick={onClose} style={{ ...primaryBtn, background: '#F3F4F6', color: '#374151', flex: 1 }}>Fermer</button>
+        <button onClick={onClose} style={{ ...primaryBtn, background: '#F3F4F6', color: '#374151', flex: 1 }}>
+          {why ? 'Sans raison' : 'Fermer'}
+        </button>
         <button onClick={save} disabled={saving || !text.trim()} style={{ ...primaryBtn, flex: 1, opacity: saving || !text.trim() ? 0.6 : 1 }}>
-          {saving ? '…' : 'Ajouter la note'}
+          {saving ? '…' : why ? 'Enregistrer la raison' : 'Ajouter la note'}
         </button>
       </div>
     </Modal>

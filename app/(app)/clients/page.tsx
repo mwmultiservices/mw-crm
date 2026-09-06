@@ -3,12 +3,13 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { supabase } from '@/lib/supabase'
 import { isManager } from '@/lib/roles'
 import { money } from '@/lib/payes'
+import QuoteDetailModal from '@/components/soumissions/QuoteDetailModal'
 import { stageLabel } from '@/lib/pipeline'
 import {
   getClients, getClientHistory, createClient, updateClient, deleteClient,
   directionsUrl, type Client, type ClientHistory,
 } from '@/lib/queries/clients'
-import { getQuote, STATUS_BY_ID, CATEGORY_LABELS, type Quote } from '@/lib/queries/soumissions'
+import { STATUS_BY_ID } from '@/lib/queries/soumissions'
 import { Plus, Search, Users, Navigation, Phone, Mail, MapPin, X, Trash2, Pencil, RefreshCw } from 'lucide-react'
 import { autoFocusDesktop } from '@/lib/ui'
 
@@ -264,66 +265,6 @@ function ClientDrawer({ client, canDelete, onClose, onEdit, onDeleted }: {
 }
 
 // ----------------------------------------------------------------------------
-// Fiche soumission (lecture seule) — ouverte depuis l'historique d'un client.
-function QuoteDetailModal({ quoteId, onClose }: { quoteId: string; onClose: () => void }) {
-  const [quote, setQuote] = useState<Quote | null>(null)
-  const [loading, setLoading] = useState(true)
-
-  useEffect(() => {
-    getQuote(quoteId).then((q) => { setQuote(q); setLoading(false) })
-  }, [quoteId])
-
-  const st = quote ? STATUS_BY_ID[quote.status] : null
-
-  return (
-    <div onClick={onClose} className="mw-modal-overlay">
-      <div onClick={(e) => e.stopPropagation()} className="mw-modal-card" style={{ width: 'min(420px, 100%)' }}>
-        {loading ? (
-          <div style={{ padding: 20, textAlign: 'center', color: '#9CA3AF', fontSize: 13 }}>Chargement…</div>
-        ) : !quote ? (
-          <div style={{ padding: 20, textAlign: 'center', color: '#9CA3AF', fontSize: 13 }}>Soumission introuvable.</div>
-        ) : (
-          <>
-            <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 }}>
-              <div>
-                <div style={{ fontSize: 18, fontWeight: 700, color: '#111827' }}>
-                  {quote.type === 'facture' ? 'Facture' : 'Devis'}
-                </div>
-                <div style={{ fontSize: 12, color: '#9CA3AF' }}>{fmtDate(quote.created_at)}</div>
-              </div>
-              <button onClick={onClose} aria-label="Fermer" style={iconBtn}><X size={18} /></button>
-            </div>
-
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '14px 0' }}>
-              {st && <span style={{ padding: '4px 12px', borderRadius: 999, fontSize: 12, fontWeight: 700, background: st.bg, color: st.color }}>{st.label}</span>}
-              {quote.price != null && <span style={{ marginLeft: 'auto', fontSize: 22, fontWeight: 800, color: '#0D6E6F' }}>{money(Number(quote.price))}</span>}
-            </div>
-
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              <DetailRow label="Client" value={quote.client_name || '—'} />
-              {quote.client_email && <DetailRow label="Courriel" value={quote.client_email} />}
-              <DetailRow label="Service" value={quote.service_type || '—'} />
-              {quote.service_category && <DetailRow label="Catégorie" value={CATEGORY_LABELS[quote.service_category] ?? quote.service_category} />}
-              {quote.plan && <DetailRow label="Plan" value={quote.plan} />}
-              <DetailRow label="QuickBooks" value={quote.quickbooks_id ? `Synchronisé${quote.quickbooks_emailed_at ? ` · envoyé le ${fmtDate(quote.quickbooks_emailed_at)}` : ''}` : 'Non synchronisé'} />
-            </div>
-
-            {quote.notes && (
-              <div style={{ marginTop: 14 }}>
-                <Label>Notes</Label>
-                <div style={{ fontSize: 13, color: '#374151', whiteSpace: 'pre-wrap', background: '#F9FAFB', borderRadius: 8, padding: 10 }}>{quote.notes}</div>
-              </div>
-            )}
-
-            <button onClick={onClose} style={{ ...primaryBtn, width: '100%', justifyContent: 'center', marginTop: 18 }}>Fermer</button>
-          </>
-        )}
-      </div>
-    </div>
-  )
-}
-
-// ----------------------------------------------------------------------------
 // Modal création / édition
 function ClientModal({ client, onClose, onSaved }: { client: Client | null; onClose: () => void; onSaved: () => void }) {
   const isEdit = !!client
@@ -458,15 +399,6 @@ function HistRow({ left, mid, right, date, onClick }: {
       <span style={{ color: '#6B7280' }}>{mid}</span>
       {right && <span style={{ fontWeight: 700, color: '#0D6E6F' }}>{right}</span>}
       {date && <span style={{ color: '#9CA3AF', fontSize: 11 }}>{fmtDate(date)}</span>}
-    </div>
-  )
-}
-function DetailRow({ label, value }: { label: string; value: string }) {
-  return (
-    <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, fontSize: 13 }}>
-      <span style={{ flex: '0 0 96px', fontSize: 11, fontWeight: 700, color: '#9CA3AF', textTransform: 'uppercase', letterSpacing: '0.04em' }}>{label}</span>
-      {/* pre-wrap : les soumissions importées de QuickBooks ont une description multi-lignes dans service_type */}
-      <span style={{ flex: 1, color: '#374151', wordBreak: 'break-word', whiteSpace: 'pre-wrap' }}>{value}</span>
     </div>
   )
 }

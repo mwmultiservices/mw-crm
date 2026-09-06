@@ -325,9 +325,11 @@ function JobsDetail({ jobs, rates, upsellByJob }: { jobs: DoneJobRow[]; rates?: 
       {jobs.map((j) => {
         const extra = UPSELL_COUNTS_IN_JOB_BASE ? (upsellByJob?.get(j.id) ?? 0) : 0
         const base = (Number(j.price) || 0) + extra
-        const { mode, amount } = jobPayFor({ ...j, price: base }, r)
+        const { mode, amount, hours } = jobPayFor({ ...j, price: base }, r)
         const meta = PAY_MODE_BY_ID[mode]
         const percent = meta?.kind === 'percent'
+        // horaire : montant réel si l'admin a inscrit le temps de la job
+        const payable = percent || hours > 0
         return (
           <div key={j.id} style={{ display: 'grid', gridTemplateColumns: '80px 1fr 96px 80px 90px', gap: 8, padding: '6px 0', fontSize: 12, color: '#6B7280', borderTop: '1px solid #F3F4F6', alignItems: 'center' }}>
             <span style={{ textTransform: 'capitalize', fontWeight: 600, color: '#374151' }}>
@@ -337,11 +339,11 @@ function JobsDetail({ jobs, rates, upsellByJob }: { jobs: DoneJobRow[]; rates?: 
               {j.type === 'fenetre' ? '🪟' : j.type === 'gazon' ? '🌿' : '🔨'} {j.title || j.service || 'Job'}
             </span>
             <span style={{ fontSize: 10, fontWeight: 700, color: '#6B7280', textTransform: 'uppercase', letterSpacing: '0.04em', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-              {meta?.short ?? '—'}{percent ? ` ${r[meta.rate]}%` : ''}
+              {meta?.short ?? '—'}{percent ? ` ${r[meta.rate]}%` : hours > 0 ? ` ${hours} h` : ''}
             </span>
             <span>{money(base)}{extra > 0 ? <span style={{ color: '#0D6E6F', fontWeight: 700 }}> ↑</span> : null}</span>
-            <span style={{ textAlign: 'right', fontWeight: 700, color: percent ? '#0D6E6F' : '#9CA3AF' }}>
-              {percent ? money(amount) : 'aux heures'}
+            <span style={{ textAlign: 'right', fontWeight: 700, color: payable ? (percent ? '#0D6E6F' : '#697035') : '#9CA3AF' }}>
+              {payable ? money(amount) : 'aux heures'}
             </span>
           </div>
         )

@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'react'
 import { getProfilesWithRates } from '@/lib/queries/calendar'
 import {
-  payRatesOf, jobPayFor, PAY_MODE_BY_ID, money2,
+  payRatesOf, jobPayFor, PAY_MODE_BY_ID, money2, EMPTY_RATES,
   UPSELL_COUNTS_IN_JOB_BASE, type PayRates,
 } from '@/lib/payes'
 import { Wallet } from 'lucide-react'
@@ -11,7 +11,8 @@ import { Wallet } from 'lucide-react'
 // « Ce que cette job paye » — applique la grille salariale 2026 de chaque
 // assigné (lib/payes.ts) au prix de la job + ses upsells.
 //   - mode % (vitres)   → montant versé PAR technicien sur le prix complet
-//   - mode horaire      → payé aux heures pointées, pas au prix de la job
+//   - mode horaire      → temps de la job (jobs.pay_hours) × son taux horaire ;
+//                         sans temps saisi, la paye vient des heures pointées
 // L'employé (canEdit=false) ne voit QUE sa propre ligne ; l'admin voit tout.
 // ============================================================
 
@@ -22,6 +23,8 @@ interface Props {
     price: number | null
     pay_mode?: string | null
     assigned_ids?: string[] | null
+    /** temps de la job en heures (modes horaires) */
+    pay_hours?: number | null
   }
   /** vendeur (« closer ») crédité de la commission de vente */
   soldBy?: string | null
@@ -68,6 +71,8 @@ export default function JobPayPanel({ job, soldBy = null, upsellTotal = 0, userI
 
   const base = (Number(job.price) || 0) + (UPSELL_COUNTS_IN_JOB_BASE ? upsellTotal : 0)
   const jobForPay = { ...job, price: base }
+  // mode de la job (le même pour tous les assignés) — pilote les messages du pied
+  const jobMode = jobPayFor(jobForPay, EMPTY_RATES).mode
   // la commission de vente porte sur le prix de la job (les upsells ont leur
   // propre vendeur, crédité séparément par computeCommissions)
   const sellerAmount = seller ? Math.round((Number(job.price) || 0) * seller.rates.pct_vente) / 100 : 0
@@ -80,7 +85,7 @@ export default function JobPayPanel({ job, soldBy = null, upsellTotal = 0, userI
       </div>
 
       {visible.map((l) => {
-        const { mode, amount, rate } = jobPayFor(jobForPay, l.rates)
+        const { mode, amount, rate, hours } = jobPayFor(jobForPay, l.rates)
         const meta = PAY_MODE_BY_ID[mode]
         const hourly = meta.kind === 'hourly'
         const hourRate = l.rates[meta.rate]
@@ -90,14 +95,16 @@ export default function JobPayPanel({ job, soldBy = null, upsellTotal = 0, userI
               <span style={{ fontWeight: 600, color: '#111827' }}>{l.name}{l.id === userId ? ' (moi)' : ''}</span>
               <span style={{ display: 'block', fontSize: 11, color: '#9CA3AF' }}>
                 {hourly
-                  ? `${meta.short} — payé aux heures pointées${hourRate > 0 ? ` · ${money2(hourRate)}/h` : ''}`
+                  ? hours > 0
+                    ? `${meta.short} · ${hours} h × ${money2(hourRate)}/h`
+                    : `${meta.short} — payé aux heures pointées${hourRate > 0 ? ` · ${money2(hourRate)}/h` : ''}`
                   : rate > 0
                     ? `${meta.short} · ${rate} % du prix complet`
                     : `${meta.short} — aucun % défini sur son profil`}
               </span>
             </div>
             <strong style={{ color: hourly ? '#697035' : '#0D6E6F', whiteSpace: 'nowrap' }}>
-              {hourly ? '⏱' : money2(amount)}
+              {hourly && hours === 0 ? '⏱' : money2(amount)}
             </strong>
           </div>
         )
@@ -117,16 +124,23 @@ export default function JobPayPanel({ job, soldBy = null, upsellTotal = 0, userI
         </div>
       )}
 
-      {base > 0 && (
+      {base > 0 && PAY_MODE_BY_ID[jobMode].kind === 'percent' && (
         <p style={{ margin: '6px 0 0', fontSize: 11, color: '#9CA3AF', lineHeight: 1.45 }}>
           Base de calcul : {money2(base)}
           {upsellTotal > 0 && UPSELL_COUNTS_IN_JOB_BASE ? ` (prix ${money2(Number(job.price) || 0)} + upsells ${money2(upsellTotal)})` : ''}.
           {' '}Le montant est versé à CHAQUE technicien, sur le prix complet.
         </p>
       )}
-      {base === 0 && (
+      {base === 0 && PAY_MODE_BY_ID[jobMode].kind === 'percent' && (
         <p style={{ margin: '6px 0 0', fontSize: 11, color: '#9CA3AF' }}>
           Prix de la job non renseigné — la commission s&apos;affichera une fois le prix entré.
+        </p>
+      )}
+      {PAY_MODE_BY_ID[jobMode].kind === 'hourly' && (
+        <p style={{ margin: '6px 0 0', fontSize: 11, color: '#9CA3AF', lineHeight: 1.45 }}>
+          {Number(job.pay_hours) > 0
+            ? `Temps de la job : ${Number(job.pay_hours)} h, payées à CHAQUE employé assigné.`
+            : 'Job payée à l\u2019heure — entre le temps de la job pour voir ce que chacun touche.'}
         </p>
       )}
     </div>

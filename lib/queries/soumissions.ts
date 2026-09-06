@@ -86,3 +86,29 @@ export async function deleteQuote(id: string): Promise<{ error: string | null }>
   const { error } = await supabase.from('quotes').delete().eq('id', id)
   return { error: error?.message ?? null }
 }
+
+// Soumissions d'un client — pour rattacher une job de projet à la soumission
+// signée avec lui (JobModal). On interroge client_id ET client_name : les
+// soumissions importées de QuickBooks n'ont pas toujours de client_id, et
+// celles saisies à la main portent souvent juste le nom.
+// Ordre : les soumissions concrétisées (signée/facturée/payée) d'abord.
+const LINKED_FIRST = ['signed', 'invoiced', 'paid']
+
+export async function getQuotesForClient(
+  clientId: string | null,
+  clientName?: string | null,
+): Promise<Quote[]> {
+  const name = (clientName ?? '').trim()
+  if (!clientId && !name) return []
+  const queries = []
+  if (clientId) queries.push(supabase.from('quotes').select(COLS).eq('client_id', clientId))
+  if (name) queries.push(supabase.from('quotes').select(COLS).ilike('client_name', name))
+  const results = await Promise.all(queries)
+  const byId = new Map<string, Quote>()
+  for (const r of results) for (const q of (r.data as Quote[]) ?? []) byId.set(q.id, q)
+  return [...byId.values()].sort((a, b) => {
+    const sa = LINKED_FIRST.includes(a.status) ? 0 : 1
+    const sb = LINKED_FIRST.includes(b.status) ? 0 : 1
+    return sa !== sb ? sa - sb : (b.created_at ?? '').localeCompare(a.created_at ?? '')
+  })
+}

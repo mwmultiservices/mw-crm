@@ -6,7 +6,8 @@ import { searchClients, fullAddress, type Client } from '@/lib/queries/clients'
 import { GAZON_ROUTES, findRoute, routeLabel } from '@/lib/gazon-routes'
 import { autoFocusDesktop } from '@/lib/ui'
 import { PAY_MODES, PAY_MODE_BY_ID, autoPayMode, type PayMode } from '@/lib/payes'
-import { WINDOW_SERVICES, servicesFromValue, freeServiceText, joinServiceValue } from '@/lib/services'
+import { serviceCatalogFor, servicesFromValue, freeServiceText, joinServiceValue } from '@/lib/services'
+import { getQuotesForClient, getQuote, STATUS_BY_ID, type Quote } from '@/lib/queries/soumissions'
 import { JOB_STATUSES, jobStatusMeta, normalizeJobStatus } from '@/lib/job-status'
 import type { Lane, ProfileMini } from './WeekCalendar'
 import JobExtras from './JobExtras'
@@ -14,7 +15,8 @@ import JobUpsells from './JobUpsells'
 import JobPayPanel from './JobPayPanel'
 import NewClientModal from './NewClientModal'
 import MultiPicker from '@/components/ui/MultiPicker'
-import { Trash2, Navigation, Phone, Play, UserPlus } from 'lucide-react'
+import QuoteDetailModal from '@/components/soumissions/QuoteDetailModal'
+import { Trash2, Navigation, Phone, Play, UserPlus, Eye } from 'lucide-react'
 
 interface Props {
   kind: 'fenetre' | 'paysagement'
@@ -63,19 +65,21 @@ export default function JobModal({ kind, canEdit = true, userId = null, lanes, a
   const ro = !canEdit // lecture seule (employés non-admin)
 
   const [type, setType] = useState(job?.type ?? (kind === 'fenetre' ? 'fenetre' : 'gazon'))
+  // catalogue du menu déroulant Service : vitres (fenêtres) ou projets (paysagement).
+  // Réactif : basculer gazon → projet change la liste (et vide la sélection).
+  const catalog = useMemo(() => serviceCatalogFor(type), [type])
   const [title, setTitle] = useState(job ? (clientName(job) || job.title || '') : '')
-  const [service, setService] = useState(job?.service ?? '')
-  // Fenêtres : plusieurs services cochables dans le menu déroulant
+  // Fenêtres ET projets : plusieurs services cochables dans le menu déroulant
   // (lib/services.ts). Ce qui n'est pas au catalogue (ancienne saisie libre)
   // atterrit dans le champ « Autre service ».
   const [servicePicks, setServicePicks] = useState<string[]>(
-    () => (kind === 'fenetre' ? servicesFromValue(job?.service).map((s) => s.label) : []),
+    () => servicesFromValue(job?.service, catalog).map((s) => s.label),
   )
   const [serviceOther, setServiceOther] = useState(
-    () => (kind === 'fenetre' ? freeServiceText(job?.service) : ''),
+    () => freeServiceText(job?.service, catalog),
   )
   const [serviceFree, setServiceFree] = useState(
-    () => kind === 'fenetre' && !!freeServiceText(job?.service),
+    () => !!freeServiceText(job?.service, catalog),
   )
   // total des upsells enregistrés sur cette job (remonté par <JobUpsells>)
   const [upsellTotal, setUpsellTotal] = useState(0)
@@ -92,6 +96,8 @@ export default function JobModal({ kind, canEdit = true, userId = null, lanes, a
   const [price, setPrice] = useState(job?.price != null ? String(job.price) : '')
   // '' = auto (déduit du type/service/nb d'assignés au moment du calcul de paye)
   const [payMode, setPayMode] = useState<string>(job?.pay_mode ?? '')
+  // temps de la job en heures — payé à CHAQUE employé assigné (modes horaires)
+  const [payHours, setPayHours] = useState(job?.pay_hours != null ? String(job.pay_hours) : '')
   // 'scheduled' (ancienne valeur en base) → « Job confirmée » ; nouveau job = confirmée
   const [status, setStatus] = useState<string>(normalizeJobStatus(job?.status))
   // vendeur (« closer ») : sa commission de vente tombe dans sa paye
@@ -102,10 +108,8 @@ export default function JobModal({ kind, canEdit = true, userId = null, lanes, a
 
   const isGazon = kind === 'paysagement' && type === 'gazon'
   // Valeur réellement stockée dans jobs.service : les services cochés joints
-  // par « + » (fenêtres), ou la saisie libre (projets de paysagement).
-  const serviceValue = kind === 'fenetre'
-    ? joinServiceValue(servicePicks, serviceFree ? serviceOther : '')
-    : service
+  // par « + », plus l'éventuel service libre.
+  const serviceValue = joinServiceValue(servicePicks, serviceFree ? serviceOther : '')
   // mode déduit si l'admin laisse « Auto » (dépend du nb d'assignés → réactif)
   const autoMode: PayMode = autoPayMode(type, serviceValue, assigned.length)
   const effectiveMode: PayMode = (payMode as PayMode) || autoMode
@@ -118,6 +122,37 @@ export default function JobModal({ kind, canEdit = true, userId = null, lanes, a
   const [newClient, setNewClient] = useState(false) // modal « Ajouter nouveau »
   const [flash, setFlash] = useState('')            // ex. « client créé, QuickBooks ignoré »
   const skipSearch = useRef(false) // évite de rouvrir la liste juste après un choix
+
+  // --- soumission signée rattachée (projets de paysagement) ---
+  // L'admin choisit une des soumissions du client ; le bouton « Prévisualiser »
+  // n'apparaît QUE pour lui — la fiche affiche les prix.
+  const [quoteId, setQuoteId] = useState<string | null>(job?.quote_id ?? null)
+  const [quotes, setQuotes] = useState<Quote[]>([])
+  const [linkedQuote, setLinkedQuote] = useState<Quote | null>(null)
+  const [previewQuote, setPreviewQuote] = useState<string | null>(null)
+  const canLinkQuote = type === 'projet'
+
+  useEffect(() => {
+    if (!canLinkQuote || (!clientId && !title.trim())) { setQuotes([]); return }
+    let cancelled = false
+    getQuotesForClient(clientId, title.trim()).then((list) => {
+      if (!cancelled) setQuotes(list)
+    })
+    return () => { cancelled = true }
+  }, [canLinkQuote, clientId, title])
+
+  // La soumission DÉJÀ rattachée peut ne pas ressortir de la recherche (nom du
+  // client modifié depuis) : on la charge par id pour qu'elle reste affichée.
+  useEffect(() => {
+    if (!job?.quote_id) return
+    let cancelled = false
+    getQuote(job.quote_id).then((q) => { if (!cancelled) setLinkedQuote(q) })
+    return () => { cancelled = true }
+  }, [job?.quote_id])
+
+  const quoteOptions = useMemo(() => (
+    linkedQuote && !quotes.some((q) => q.id === linkedQuote.id) ? [linkedQuote, ...quotes] : quotes
+  ), [linkedQuote, quotes])
 
   // Vendeurs possibles : toute l'équipe (n'importe qui peut closer une vente).
   const sellerOptions = useMemo(() => {
@@ -165,6 +200,15 @@ export default function JobModal({ kind, canEdit = true, userId = null, lanes, a
       : `Client « ${c.name} » créé dans le CRM. QuickBooks non synchronisé${qbError ? ` (${qbError})` : ''}.`)
   }
 
+  // Durée de l'horaire (début → fin), proposée comme temps de la job.
+  const scheduledHours = useMemo(() => {
+    if (!start || !end) return 0
+    const [h1, m1] = start.split(':').map(Number)
+    const [h2, m2] = end.split(':').map(Number)
+    const mins = h2 * 60 + m2 - (h1 * 60 + m1)
+    return mins > 0 ? Math.round((mins / 60) * 100) / 100 : 0
+  }, [start, end])
+
   const toggleAssign = (id: string) =>
     setAssigned((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]))
 
@@ -196,6 +240,10 @@ export default function JobModal({ kind, canEdit = true, userId = null, lanes, a
       payload.client_email = clientEmail.trim() || null
     }
     if (payMode || job?.pay_mode != null) payload.pay_mode = payMode || null
+    // jobs.pay_hours / jobs.quote_id : colonnes récentes (migration_crm_job_heures)
+    // — omises tant qu'elles sont vides, pour tolérer la migration pas appliquée
+    if (payHours.trim() || job?.pay_hours != null) payload.pay_hours = payHours.trim() ? Number(payHours) : null
+    if (canLinkQuote && (quoteId || job?.quote_id != null)) payload.quote_id = quoteId || null
     // jobs.sold_by : colonne récente (migration_crm_job_vendeur) — omise si vide
     if (!isGazon && (soldBy || job?.sold_by != null)) payload.sold_by = soldBy || null
     const { error: e } = isEdit ? await updateJob(job!.id, payload) : await createJob(payload)
@@ -248,7 +296,12 @@ export default function JobModal({ kind, canEdit = true, userId = null, lanes, a
               ) : (
                 <div style={{ display: 'flex', gap: 8 }}>
                   {TYPE_OPTIONS.map((t) => (
-                    <button key={t.id} onClick={() => setType(t.id)} style={{
+                    <button key={t.id} onClick={() => {
+                      if (t.id === type) return
+                      setType(t.id)
+                      // les catalogues diffèrent : on repart d'une sélection vide
+                      setServicePicks([]); setServiceOther(''); setServiceFree(false)
+                    }} style={{
                       flex: 1, padding: '8px 0', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer',
                       border: type === t.id ? '2px solid #697035' : '1px solid #D1D5DB',
                       background: type === t.id ? '#6970350F' : '#FFF', color: '#374151',
@@ -262,7 +315,9 @@ export default function JobModal({ kind, canEdit = true, userId = null, lanes, a
           {isGazon ? (
             /* gazon = une route de plusieurs clients : pas de nom, d'adresse ni de prix */
             <Field label="Route *">
-              <select value={routeName} onChange={(e) => setRouteName(e.target.value)} style={inp} autoFocus={autoFocusDesktop()}>
+              {/* PAS d'autoFocus sur un <select> : sur iPad/iPhone le sélecteur
+                  s'ouvre tout seul à l'ouverture du modal (cf. lib/ui.ts). */}
+              <select value={routeName} onChange={(e) => setRouteName(e.target.value)} style={inp}>
                 <option value="">— Choisir une route —</option>
                 {GAZON_ROUTES.map((r) => <option key={r.id} value={r.id}>{r.label}</option>)}
               </select>
@@ -332,39 +387,34 @@ export default function JobModal({ kind, canEdit = true, userId = null, lanes, a
                 </div>
               </Field>
 
-              <Field label={kind === 'fenetre' ? 'Services (plusieurs possibles)' : 'Service'}>
-                {kind === 'fenetre' ? (
-                  /* menu déroulant à cases à cocher : une job peut cumuler
-                     plusieurs services (ext. + gouttières…). Les services
-                     cochés fixent aussi le mode de paye (int/ext l'emporte)
-                     quand « Commission (défaut) » est laissé plus bas. */
-                  <>
-                    <MultiPicker
-                      options={WINDOW_SERVICES.map((s) => ({ id: s.label, label: s.label }))}
-                      selected={servicePicks}
-                      onChange={setServicePicks}
-                      placeholder="— Choisir un ou plusieurs services —"
-                      summary={serviceValue}
-                      footer={
-                        <button
-                          type="button"
-                          onClick={() => setServiceFree((v) => !v)}
-                          style={{
-                            display: 'block', width: '100%', textAlign: 'left', padding: '9px 10px',
-                            border: 'none', borderTop: '1px solid #E5E7EB', background: serviceFree ? '#69C9CA14' : '#F9FAFB',
-                            color: '#0E6B6E', fontSize: 12, fontWeight: 700, cursor: 'pointer',
-                          }}
-                        >
-                          {serviceFree ? '− Retirer le service libre' : '+ Autre service…'}
-                        </button>
-                      }
-                    />
-                    {serviceFree && (
-                      <input value={serviceOther} onChange={(e) => setServiceOther(e.target.value)} style={{ ...inp, marginTop: 6 }} placeholder="Décrire le service" />
-                    )}
-                  </>
-                ) : (
-                  <input value={service} onChange={(e) => setService(e.target.value)} style={inp} placeholder="Pavé + plate-bandes" />
+              <Field label="Services (plusieurs possibles)">
+                {/* menu déroulant à cases à cocher : une job peut cumuler
+                    plusieurs services (ext. + gouttières, pavé + haies…).
+                    Sur les fenêtres, les services cochés fixent aussi le mode
+                    de paye (int/ext l'emporte) quand « Commission (défaut) »
+                    est laissé plus bas ; les projets sont payés à l'heure. */}
+                <MultiPicker
+                  options={catalog.map((s) => ({ id: s.label, label: s.label }))}
+                  selected={servicePicks}
+                  onChange={setServicePicks}
+                  placeholder="— Choisir un ou plusieurs services —"
+                  summary={serviceValue}
+                  footer={
+                    <button
+                      type="button"
+                      onClick={() => setServiceFree((v) => !v)}
+                      style={{
+                        display: 'block', width: '100%', textAlign: 'left', padding: '9px 10px',
+                        border: 'none', borderTop: '1px solid #E5E7EB', background: serviceFree ? '#69C9CA14' : '#F9FAFB',
+                        color: '#0E6B6E', fontSize: 12, fontWeight: 700, cursor: 'pointer',
+                      }}
+                    >
+                      {serviceFree ? '− Retirer le service libre' : '+ Autre service…'}
+                    </button>
+                  }
+                />
+                {serviceFree && (
+                  <input value={serviceOther} onChange={(e) => setServiceOther(e.target.value)} style={{ ...inp, marginTop: 6 }} placeholder="Décrire le service" />
                 )}
               </Field>
 
@@ -400,6 +450,40 @@ export default function JobModal({ kind, canEdit = true, userId = null, lanes, a
                   <input value={clientEmail} onChange={(e) => setClientEmail(e.target.value)} style={inp} type="email" autoCapitalize="none" placeholder="client@exemple.com" />
                 </Field>
               </div>
+
+              {/* Soumission déjà signée avec ce client (projets). Le menu
+                  n'affiche AUCUN prix — seul l'admin peut ouvrir la fiche. */}
+              {canLinkQuote && (
+                <Field label="Soumission du client">
+                  <select value={quoteId ?? ''} onChange={(e) => setQuoteId(e.target.value || null)} style={inp}>
+                    <option value="">— Aucune —</option>
+                    {quoteOptions.map((q) => (
+                      <option key={q.id} value={q.id}>{quoteOptionLabel(q)}</option>
+                    ))}
+                  </select>
+                  {quoteOptions.length === 0 && (
+                    <p style={{ margin: '5px 2px 0', fontSize: 11, color: '#9CA3AF' }}>
+                      {clientId || title.trim().length >= 2
+                        ? 'Aucune soumission trouvée pour ce client.'
+                        : 'Choisis d\u2019abord le client pour voir ses soumissions.'}
+                    </p>
+                  )}
+                  {canEdit && quoteId && (
+                    <button
+                      type="button"
+                      onClick={() => setPreviewQuote(quoteId)}
+                      style={{
+                        display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7, width: '100%',
+                        marginTop: 6, padding: '9px 12px', borderRadius: 9, cursor: 'pointer',
+                        border: '1px solid #69C9CA', background: '#69C9CA14', color: '#0E6B6E',
+                        fontSize: 13, fontWeight: 700,
+                      }}
+                    >
+                      <Eye size={15} />Prévisualiser la soumission
+                    </button>
+                  )}
+                </Field>
+              )}
             </>
           )}
 
@@ -446,6 +530,37 @@ export default function JobModal({ kind, canEdit = true, userId = null, lanes, a
                   ? `Chaque technicien assigné touche son % ${PAY_MODE_BY_ID[effectiveMode].short.toLowerCase()} du prix complet.`
                   : `Payé aux heures pointées au taux ${effectiveMode === 'commercial' ? 'commercial' : 'paysagement'}, pas au prix de la job.`}
                 {' '}Commission = solo si un seul assigné, sinon équipe (ext. ou int/ext selon les services).
+              </p>
+            </Field>
+          )}
+
+          {/* Temps de la job — modes horaires (copropriété/commercial, paysagement).
+              C'est CE temps qui paye chaque employé assigné à son taux horaire ;
+              sans lui, seules les heures pointées comptent. */}
+          {PAY_MODE_BY_ID[effectiveMode].kind === 'hourly' && (
+            <Field label="Temps de la job (h)">
+              <div style={{ display: 'flex', gap: 6 }}>
+                <input
+                  value={payHours}
+                  onChange={(e) => setPayHours(e.target.value)}
+                  type="number" step="0.25" min="0" inputMode="decimal" style={inp}
+                  placeholder={scheduledHours > 0 ? String(scheduledHours) : '0'}
+                />
+                {!ro && scheduledHours > 0 && payHours !== String(scheduledHours) && (
+                  <button
+                    type="button"
+                    onClick={() => setPayHours(String(scheduledHours))}
+                    style={{
+                      flex: '0 0 auto', padding: '0 12px', borderRadius: 8, cursor: 'pointer',
+                      border: '1px solid #697035', background: '#6970350F', color: '#697035',
+                      fontSize: 12, fontWeight: 700, whiteSpace: 'nowrap',
+                    }}
+                  >= {scheduledHours} h</button>
+                )}
+              </div>
+              <p style={{ margin: '5px 2px 0', fontSize: 11, color: '#9CA3AF', lineHeight: 1.45 }}>
+                Payé à CHAQUE employé assigné, à son taux {effectiveMode === 'commercial' ? 'commercial' : 'paysagement'}.
+                Laisse vide pour t&apos;en tenir aux heures pointées.
               </p>
             </Field>
           )}
@@ -526,7 +641,11 @@ export default function JobModal({ kind, canEdit = true, userId = null, lanes, a
         )}
         {isEdit && !isGazon && (
           <JobPayPanel
-            job={{ type, service: serviceValue, price: price ? Number(price) : null, pay_mode: payMode || null, assigned_ids: assigned }}
+            job={{
+              type, service: serviceValue, price: price ? Number(price) : null,
+              pay_mode: payMode || null, assigned_ids: assigned,
+              pay_hours: payHours.trim() ? Number(payHours) : null,
+            }}
             soldBy={soldBy || null}
             upsellTotal={upsellTotal}
             userId={userId}
@@ -552,6 +671,10 @@ export default function JobModal({ kind, canEdit = true, userId = null, lanes, a
         </div>
       </div>
 
+      {previewQuote && (
+        <QuoteDetailModal quoteId={previewQuote} stacked onClose={() => setPreviewQuote(null)} />
+      )}
+
       {newClient && (
         <NewClientModal
           initialName={title}
@@ -561,6 +684,17 @@ export default function JobModal({ kind, canEdit = true, userId = null, lanes, a
       )}
     </div>
   )
+}
+
+/** Libellé d'une soumission dans le menu — SANS prix (les employés le voient). */
+function quoteOptionLabel(q: Quote): string {
+  const kind = q.type === 'facture' ? 'Facture' : 'Devis'
+  const st = STATUS_BY_ID[q.status]?.label ?? q.status
+  const date = q.created_at
+    ? new Date(q.created_at).toLocaleDateString('fr-CA', { day: 'numeric', month: 'short', year: 'numeric' })
+    : ''
+  const svc = (q.service_type ?? '').split('\n')[0].trim().slice(0, 40)
+  return [`${kind} · ${st}`, date, svc].filter(Boolean).join(' — ')
 }
 
 function Field({ label, children, flex }: { label: string; children: React.ReactNode; flex?: boolean }) {

@@ -26,7 +26,12 @@ export interface Job {
   status: string // cf. lib/job-status.ts (confirmed | pending | dispo | done | canceled ; 'scheduled' = legacy)
   price: number | null
   pay_mode?: string | null // null = déduit (cf. autoPayMode dans lib/payes)
+  /** temps de la job en heures — modes horaires (copro/commercial, paysagement).
+   *  Colonne récente : migration_crm_job_heures.sql */
+  pay_hours?: number | null
   sold_by?: string | null  // vendeur (« closer ») — commission de vente
+  /** soumission signée rattachée (projets) — migration_crm_job_heures.sql */
+  quote_id?: string | null
   notes: string | null
   clients?: { name: string } | { name: string }[] | null
 }
@@ -102,20 +107,44 @@ export interface JobInput {
   status?: string
   price?: number | null
   pay_mode?: string | null
+  pay_hours?: number | null
   sold_by?: string | null
+  quote_id?: string | null
   notes?: string | null
   client_id?: string | null
   lead_id?: string | null
 }
 
+// Colonne réclamée par PostgREST quand elle n'existe pas encore en base :
+// « Could not find the 'pay_hours' column of 'jobs' in the schema cache ».
+function missingColumn(message: string): string | null {
+  return /Could not find the '([a-z_]+)' column/.exec(message)?.[1] ?? null
+}
+
+// Enregistre en retirant les colonnes que la base ne connaît pas encore
+// (migration pas appliquée) : on préfère sauver la job sans ce champ plutôt
+// que de perdre toute la saisie. Max 4 passes = 4 colonnes récentes.
+async function saveJob(
+  input: Partial<JobInput>,
+  run: (payload: Partial<JobInput>) => Promise<{ error: { message: string } | null }>,
+): Promise<{ error: string | null }> {
+  const payload: Record<string, unknown> = { ...input }
+  for (let i = 0; i < 4; i++) {
+    const { error } = await run(payload as Partial<JobInput>)
+    if (!error) return { error: null }
+    const col = missingColumn(error.message)
+    if (!col || !(col in payload)) return { error: error.message }
+    delete payload[col]
+  }
+  return { error: 'Enregistrement impossible : colonnes manquantes en base.' }
+}
+
 export async function createJob(input: JobInput): Promise<{ error: string | null }> {
-  const { error } = await supabase.from('jobs').insert(input)
-  return { error: error?.message ?? null }
+  return saveJob(input, async (p) => await supabase.from('jobs').insert(p))
 }
 
 export async function updateJob(id: string, input: Partial<JobInput>): Promise<{ error: string | null }> {
-  const { error } = await supabase.from('jobs').update(input).eq('id', id)
-  return { error: error?.message ?? null }
+  return saveJob(input, async (p) => await supabase.from('jobs').update(p).eq('id', id))
 }
 
 export async function deleteJob(id: string): Promise<{ error: string | null }> {

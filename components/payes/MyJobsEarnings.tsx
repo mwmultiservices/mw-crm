@@ -30,7 +30,9 @@ export default function MyJobsEarnings({ profileId, weekOf, rates, compact = fal
     return () => { cancelled = true }
     // rates : objet recréé à chaque rendu du parent → on suit ses valeurs
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [profileId, weekOf, rates.pct_vente, rates.pct_vitres_solo, rates.pct_vitres_ext_equipe, rates.pct_vitres_int_ext_equipe])
+    // (les taux horaires comptent aussi depuis que le temps de la job est payé)
+  }, [profileId, weekOf, rates.pct_vente, rates.pct_vitres_solo, rates.pct_vitres_ext_equipe,
+    rates.pct_vitres_int_ext_equipe, rates.rate_paysagement, rates.rate_commercial])
 
   if (!data) return <p style={hint}>Chargement des jobs…</p>
   if (data.lines.length === 0) {
@@ -42,6 +44,7 @@ export default function MyJobsEarnings({ profileId, weekOf, rates, compact = fal
       <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
         <Tile label="Jobs faites" value={money2(data.doneTotal)} color="#0D6E6F" />
         <Tile label="À venir" value={money2(data.upcomingTotal)} color="#697035" />
+        {data.hourlyTotal > 0 && <Tile label="À l'heure" value={money2(data.hourlyTotal)} color="#8D5D36" />}
       </div>
 
       <div style={{ background: '#F9FAFB', borderRadius: 10, padding: '2px 12px' }}>
@@ -49,7 +52,9 @@ export default function MyJobsEarnings({ profileId, weekOf, rates, compact = fal
           const isUpsell = l.key.startsWith('upsell:')
           const meta = PAY_MODE_BY_ID[l.mode]
           const cat = l.category === 'heures'
-            ? `${meta?.short ?? 'Horaire'} · payé au pointage`
+            ? l.hours > 0
+              ? `${meta?.short ?? 'Horaire'} · ${l.hours} h × ${money2(l.rate)}/h`
+              : `${meta?.short ?? 'Horaire'} · payé au pointage`
             : l.as === 'vendeur'
               ? `${isUpsell ? 'Upsell vendu' : 'Vente (closer)'} · ${l.rate} % de ${money2(l.base)}`
               : `${meta?.short ?? 'Commission'} · ${l.rate} % de ${money2(l.base)}`
@@ -65,7 +70,7 @@ export default function MyJobsEarnings({ profileId, weekOf, rates, compact = fal
                 </span>
               </div>
               <strong style={{ whiteSpace: 'nowrap', color: l.category === 'heures' ? '#697035' : l.done ? '#0D6E6F' : '#9CA3AF' }}>
-                {l.category === 'heures' ? '⏱' : money2(l.amount)}
+                {l.category === 'heures' && l.hours === 0 ? '⏱' : money2(l.amount)}
               </strong>
             </div>
           )
@@ -77,7 +82,9 @@ export default function MyJobsEarnings({ profileId, weekOf, rates, compact = fal
           <Briefcase size={11} style={{ verticalAlign: -1, marginRight: 4 }} />
           Montants calculés avec ta grille de paye. Ils passent en commission officielle
           quand la direction fait le calcul de la semaine.
-          {data.hourlyJobs > 0 && ` ${data.hourlyJobs} job(s) à l'heure : voir tes heures pointées.`}
+          {data.hourlyJobs > 0 && (data.hourlyTotal > 0
+            ? ` Les jobs à l'heure utilisent le temps inscrit sur la job par la direction.`
+            : ` ${data.hourlyJobs} job(s) à l'heure : voir tes heures pointées.`)}
         </p>
       )}
     </div>

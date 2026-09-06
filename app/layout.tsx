@@ -30,7 +30,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <meta name="mobile-web-app-capable" content="yes" />
         <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
       </head>
-      <body className="bg-slate-950 text-white antialiased">
+      {/* Pas de classe utilitaire Tailwind ici : ce projet est en Tailwind v4
+          avec les directives v3, donc rien n'est généré (le fond vient de
+          `html { background }` dans globals.css). */}
+      <body>
         {children}
         <ServiceWorkerRegister />
       </body>

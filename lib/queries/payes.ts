@@ -274,6 +274,7 @@ export interface DoneJobRow {
   price: number | null
   assigned_ids: string[]
   pay_mode?: string | null
+  pay_hours?: number | null // temps de la job (migration_crm_job_heures)
   sold_by?: string | null // vendeur crédité (migration_crm_job_vendeur)
 }
 
@@ -310,10 +311,14 @@ export interface MyJobEarning {
   as: 'technicien' | 'vendeur'
   category: 'commission' | 'heures'
   mode: PayMode
+  /** % du prix (modes commission) ou $/h (modes horaires) */
   rate: number
   base: number
-  /** 0 pour les lignes « heures » : elles se paient au pointage */
+  /** montant versé : % du prix, ou heures de la job × taux horaire.
+   *  0 sur une ligne horaire dont le temps n'a pas été saisi (→ pointage). */
   amount: number
+  /** heures payées quand la job est en mode horaire (jobs.pay_hours) */
+  hours: number
 }
 
 export interface MyJobEarnings {
@@ -322,8 +327,10 @@ export interface MyJobEarnings {
   doneTotal: number
   /** commissions des jobs de la semaine pas encore « done » */
   upcomingTotal: number
-  /** nb de jobs payées à l'heure (pas de montant : voir le pointage) */
+  /** nb de jobs payées à l'heure */
   hourlyJobs: number
+  /** total des jobs horaires dont le temps a été saisi (hors commissions) */
+  hourlyTotal: number
 }
 
 export async function getMyJobEarnings(
@@ -362,13 +369,14 @@ export async function getMyJobEarnings(
   for (const j of assigned) {
     const extra = UPSELL_COUNTS_IN_JOB_BASE ? (upsellByJob.get(j.id) ?? 0) : 0
     const base = (Number(j.price) || 0) + extra
-    const { mode, amount, rate } = jobPayFor({ ...j, price: base }, rates)
+    const { mode, amount, rate, hours } = jobPayFor({ ...j, price: base }, rates)
     const hourly = PAY_MODE_BY_ID[mode]?.kind !== 'percent'
     lines.push({
       key: `job:${j.id}`, job_id: j.id, title: j.title, service: j.service, type: j.type,
       start_at: j.start_at, done: j.status === 'done', as: 'technicien',
       category: hourly ? 'heures' : 'commission',
-      mode, rate: hourly ? 0 : rate, base, amount: hourly ? 0 : amount,
+      // horaire : le montant vient du temps de la job (0 si pas saisi → pointage)
+      mode, rate, base: hourly ? 0 : base, amount, hours,
     })
   }
 
@@ -381,7 +389,7 @@ export async function getMyJobEarnings(
       key: `sold:${j.id}`, job_id: j.id, title: j.title, service: j.service, type: j.type,
       start_at: j.start_at, done: j.status === 'done', as: 'vendeur',
       category: 'commission', mode: 'solo', rate: rates.pct_vente, base,
-      amount: Math.round(base * rates.pct_vente) / 100,
+      amount: Math.round(base * rates.pct_vente) / 100, hours: 0,
     })
   }
 
@@ -397,7 +405,7 @@ export async function getMyJobEarnings(
       type: j?.type ?? null, start_at: j?.start_at ?? u.jobs?.start_at ?? null,
       done: (j?.status ?? u.jobs?.status) === 'done', as: 'vendeur',
       category: 'commission', mode: 'solo', rate: rates.pct_vente, base: share,
-      amount: Math.round(share * rates.pct_vente) / 100,
+      amount: Math.round(share * rates.pct_vente) / 100, hours: 0,
     })
   }
 
@@ -410,6 +418,7 @@ export async function getMyJobEarnings(
     doneTotal: sum((l) => l.done && l.category === 'commission'),
     upcomingTotal: sum((l) => !l.done && l.category === 'commission'),
     hourlyJobs: lines.filter((l) => l.category === 'heures').length,
+    hourlyTotal: sum((l) => l.category === 'heures'),
   }
 }
 

@@ -33,10 +33,12 @@ function payModeOf(j: Job) {
  * (vitres), un taux horaire pour les jobs payées aux heures pointées.
  */
 function payPreview(j: Job, rates: PayRates): { text: string; percent: boolean } {
-  const { mode, amount, rate } = jobPayFor(j, rates)
+  const { mode, amount, rate, hours } = jobPayFor(j, rates)
   const meta = PAY_MODE_BY_ID[mode]
   if (meta.kind === 'hourly') {
     const h = hourlyRateFor(mode === 'commercial' ? 'commercial' : 'paysagement', rates)
+    // temps de la job inscrit par la direction → on montre ce qu'elle paye
+    if (hours > 0 && h > 0) return { text: `${money2(amount)} · ${hours} h`, percent: false }
     return { text: h > 0 ? `${money2(h)}/h` : 'aux heures', percent: false }
   }
   if (!j.price) return { text: `${rate || '—'} % (prix à venir)`, percent: true }

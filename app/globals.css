@@ -54,6 +54,18 @@ html, body {
   font-family: 'Inter', sans-serif;
 }
 
+/* Fond du CANEVAS — corrige le liseré BLANC sous le bottom-nav (iPhone/iPad).
+   Tout ce que le shell ne couvre pas (zone de l'indicateur d'accueil, barre
+   d'outils repliée de Safari, écart viewport visuel / viewport de mise en page)
+   est peint par le canevas. Sans couleur ici il est BLANC par défaut.
+   ⚠️ Ce n'est PAS `bg-slate-950` sur <body> qui le fait : ce projet utilise
+   Tailwind v4 avec les directives v3 (`@tailwind base/components/utilities`),
+   donc AUCUNE classe utilitaire n'est générée — vérifié en compilant ce
+   fichier. Toutes les pages peignent leur propre fond (foncé), on met donc la
+   même valeur que le bottom-nav pour que le liseré se fonde dedans. */
+html { background: #000; }
+body { -webkit-font-smoothing: antialiased; }
+
 /* ───────── Verrou du document (posé par app/(app)/layout.tsx uniquement) ─────────
    En PWA/mobile, le document lui-même ne doit JAMAIS défiler : sinon on « traîne »
    toute la page (header + bottom-nav compris) et le rubber-band iOS décolle le
