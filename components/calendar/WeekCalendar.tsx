@@ -3,6 +3,7 @@ import { useRef, useState } from 'react'
 import Link from 'next/link'
 import { Navigation, Play } from 'lucide-react'
 import { clientName, jobDirectionsUrl, type Job } from '@/lib/queries/calendar'
+import { serviceByLabel } from '@/lib/services'
 import { findRoute } from '@/lib/gazon-routes'
 
 export interface Lane { id: string; label: string; color: string }
@@ -345,8 +346,9 @@ export default function WeekCalendar({
                         {route ? `🌿 ${route.label}` : (clientName(job) || job.title || job.service || 'Job')}
                       </div>
                       {!compact && !route && job.route_name && <div style={{ fontSize: 10, color: '#697035' }}>🌿 {job.route_name}</div>}
+                      {/* libellé court : « Lavage de vitres intérieur / extérieur » ne rentre pas dans 116 px */}
                       {!compact && job.service && (clientName(job) || job.title) && (
-                        <div style={{ fontSize: 10, color: '#6B7280', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{job.service}</div>
+                        <div style={{ fontSize: 10, color: '#6B7280', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{serviceByLabel(job.service)?.short ?? job.service}</div>
                       )}
                       {height >= 76 && job.assigned_ids?.length > 0 && (
                         <div style={{ display: 'flex', gap: 3, marginTop: 4, flexWrap: 'wrap' }}>

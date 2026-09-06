@@ -1,7 +1,7 @@
 import { supabase } from '@/lib/supabase'
 import {
   repBonus, weekRangeISO, addWeeks, hoursBetween,
-  payRatesOf, jobPayFor, hourlyRateFor, PAY_MODE_BY_ID,
+  payRatesOf, jobPayFor, hourlyRateFor, PAY_MODE_BY_ID, UPSELL_COUNTS_IN_JOB_BASE, autoPayMode,
   type PayRates, type PayMode,
 } from '@/lib/payes'
 
@@ -35,6 +35,10 @@ export interface TimesheetRow {
   hours: number
   job_note: string | null
   work_type?: string | null
+  job_id?: string | null
+  // job pointée (embed PostgREST) — sert à savoir si ces heures sont payées
+  // à l'heure ou déjà couvertes par un % de commission
+  jobs?: { type: string | null; service: string | null; price: number | null; pay_mode: string | null; assigned_ids: string[] | null } | null
   paid: boolean
   profiles?: { full_name: string | null; hourly_rate: number | null } | null
 }
@@ -48,6 +52,46 @@ export interface EmployeeHours {
   totalHours: number
   pay: number
   paid: boolean
+}
+
+// Ce qu'une ligne de pointage vaut en dollars. Les heures faites sur une job
+// payée au POURCENTAGE (vitres résidentielles) ne sont PAS payées à l'heure :
+// elles sont déjà couvertes par la commission de la job — on les garde
+// seulement pour le suivi du temps.
+export function timesheetIsHourly(r: TimesheetRow): boolean {
+  const j = r.jobs
+  if (!j) return true
+  const mode = (j.pay_mode as PayMode | null) || autoPayMode(j.type, j.service, j.assigned_ids?.length ?? 0)
+  return PAY_MODE_BY_ID[mode]?.kind !== 'percent'
+}
+
+export function timesheetPay(r: TimesheetRow, rates: PayRates): number {
+  if (!timesheetIsHourly(r)) return 0
+  return (Number(r.hours) || 0) * hourlyRateFor(r.work_type, rates)
+}
+
+// --- UPSELLS (ventes additionnelles faites sur une job) ---------------------
+export interface WeekUpsell {
+  id: string
+  job_id: string
+  service: string
+  price: number
+  sold_by: string | null
+  jobs?: { start_at: string | null; status: string | null } | null
+}
+
+// Upsells rattachés à une job de la période (hors jobs annulées).
+// Table absente (migration_crm_vitres_upsell pas appliquée) → [].
+export async function getUpsellsWeek(weekOf: string, weeks = 1): Promise<WeekUpsell[]> {
+  const { startISO } = weekRangeISO(weekOf)
+  const { endISO } = weekRangeISO(addWeeks(weekOf, weeks - 1))
+  const { data } = await supabase
+    .from('job_upsells')
+    .select('id, job_id, service, price, sold_by, jobs!inner(start_at, status)')
+    .gte('jobs.start_at', startISO)
+    .lt('jobs.start_at', endISO)
+    .neq('jobs.status', 'canceled')
+  return (data as unknown as WeekUpsell[]) ?? []
 }
 
 // --- COMMISSIONS (admin) ---------------------------------------------------
@@ -77,12 +121,20 @@ export async function markCommissionPaid(id: string, paid: boolean): Promise<voi
 export async function computeCommissions(weekOf: string): Promise<{ reps: number; techs: number; overrides: number }> {
   const { startISO, endISO } = weekRangeISO(weekOf)
 
-  const [{ data: profiles }, { data: wonLeads }, { data: jobs }, { data: existing }] = await Promise.all([
+  const [{ data: profiles }, { data: wonLeads }, { data: jobs }, { data: existing }, upsells] = await Promise.all([
     supabase.from('profiles').select('*'),
     supabase.from('leads').select('rep_id, price').eq('stage', 'won').gte('updated_at', startISO).lt('updated_at', endISO),
     supabase.from('jobs').select('*').eq('type', 'fenetre').eq('status', 'done').gte('start_at', startISO).lt('start_at', endISO),
     supabase.from('commissions').select('profile_id, type, paid').eq('week_of', weekOf),
+    getUpsellsWeek(weekOf),
   ])
+
+  // Upsells : montant par job (base du % des techniciens) et par vendeur
+  // (commission de vente, exactement comme un lead gagné).
+  const upsellByJob = new Map<string, number>()
+  for (const u of upsells) {
+    upsellByJob.set(u.job_id, (upsellByJob.get(u.job_id) ?? 0) + (Number(u.price) || 0))
+  }
 
   const paidSet = new Set((existing ?? []).filter((e) => e.paid).map((e) => `${e.profile_id}:${e.type}`))
   const profById = new Map((profiles ?? []).map((p) => [p.id as string, p]))
@@ -96,6 +148,15 @@ export async function computeCommissions(weekOf: string): Promise<{ reps: number
     a.base += Number(l.price) || 0
     a.deals += 1
     repAgg.set(l.rep_id, a)
+  }
+
+  // un upsell vendu sur le chantier compte comme une vente du vendeur désigné
+  for (const u of upsells) {
+    if (!u.sold_by) continue
+    const a = repAgg.get(u.sold_by) ?? { base: 0, deals: 0 }
+    a.base += Number(u.price) || 0
+    a.deals += 1
+    repAgg.set(u.sold_by, a)
   }
 
   const repUpserts: Record<string, unknown>[] = []
@@ -124,10 +185,12 @@ export async function computeCommissions(weekOf: string): Promise<{ reps: number
     for (const id of ids) {
       const rates = ratesById.get(id)
       if (!rates) continue
-      const { mode, amount } = jobPayFor(j, rates)
+      const extra = UPSELL_COUNTS_IN_JOB_BASE ? (upsellByJob.get(j.id) ?? 0) : 0
+      const jobBase = { ...j, price: (Number(j.price) || 0) + extra }
+      const { mode, amount } = jobPayFor(jobBase, rates)
       if (PAY_MODE_BY_ID[mode]?.kind !== 'percent') continue // horaire → feuilles de temps
       const a = techAgg.get(id) ?? { base: 0, jobs: 0, pay: 0, modes: new Set<PayMode>() }
-      a.base += Number(j.price) || 0
+      a.base += jobBase.price
       a.jobs += 1
       a.pay += amount
       a.modes.add(mode)
@@ -204,16 +267,20 @@ export async function getDoneJobs(weekOf: string, weeks = 1): Promise<DoneJobRow
 }
 
 // --- TIMESHEETS / HEURES (admin) -------------------------------------------
+// Embed de la job pointée : n'existe qu'une fois timesheets.job_id créé
+// (migration_crm_vitres_upsell). On retente sans, sinon la page casserait.
+const TS_JOB_EMBED = 'jobs(type, service, price, pay_mode, assigned_ids)'
+
 export async function getTimesheetsWeek(weekOf: string): Promise<EmployeeHours[]> {
   const end = addWeeks(weekOf, 1)
-  const { data } = await supabase
-    .from('timesheets')
-    .select('*, profiles(*)')
-    .gte('date', weekOf)
-    .lt('date', end)
+  const run = (sel: string) => supabase
+    .from('timesheets').select(sel)
+    .gte('date', weekOf).lt('date', end)
     .order('date', { ascending: true })
+  let res = await run(`*, profiles(*), ${TS_JOB_EMBED}`)
+  if (res.error) res = await run('*, profiles(*)')
 
-  const rows = (data as TimesheetRow[]) ?? []
+  const rows = (res.data as unknown as TimesheetRow[]) ?? []
   const byEmp = new Map<string, EmployeeHours>()
   for (const r of rows) {
     let e = byEmp.get(r.profile_id)
@@ -229,10 +296,10 @@ export async function getTimesheetsWeek(weekOf: string): Promise<EmployeeHours[]
       byEmp.set(r.profile_id, e)
     }
     e.rows.push(r)
-    const h = Number(r.hours) || 0
-    e.totalHours += h
-    // chaque ligne est payée à SON taux (paysagement 20-24 $/h vs commercial 22 $/h)
-    e.pay += h * hourlyRateFor(r.work_type, e.rates)
+    e.totalHours += Number(r.hours) || 0
+    // chaque ligne est payée à SON taux (paysagement 20-24 $/h vs commercial
+    // 22 $/h) — sauf les heures faites sur une job payée au % (déjà en commission)
+    e.pay += timesheetPay(r, e.rates)
     if (r.paid) e.paid = true
   }
   for (const e of byEmp.values()) {
@@ -264,14 +331,13 @@ export async function getMyCommission(profileId: string, weekOf: string): Promis
 
 export async function getMyTimesheets(profileId: string, weekOf: string): Promise<TimesheetRow[]> {
   const end = addWeeks(weekOf, 1)
-  const { data } = await supabase
-    .from('timesheets')
-    .select('*')
-    .eq('profile_id', profileId)
-    .gte('date', weekOf)
-    .lt('date', end)
+  const run = (sel: string) => supabase
+    .from('timesheets').select(sel)
+    .eq('profile_id', profileId).gte('date', weekOf).lt('date', end)
     .order('date', { ascending: true })
-  return (data as TimesheetRow[]) ?? []
+  let res = await run(`*, ${TS_JOB_EMBED}`)
+  if (res.error) res = await run('*')
+  return (res.data as unknown as TimesheetRow[]) ?? []
 }
 
 // --- CLOCK IN / OUT (self) -------------------------------------------------
@@ -287,27 +353,38 @@ export async function getOpenTimesheet(profileId: string): Promise<TimesheetRow 
   return (data as TimesheetRow) ?? null
 }
 
-export async function clockIn(profileId: string, note?: string, workType?: string): Promise<TimesheetRow | null> {
+export async function clockIn(
+  profileId: string, note?: string, workType?: string, jobId?: string | null,
+): Promise<TimesheetRow | null> {
   const now = new Date()
   const date = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
   const row: Record<string, unknown> = {
     profile_id: profileId, date, clock_in: now.toISOString(), job_note: note || null,
   }
+  // colonnes récentes : work_type (migration_crm_salaires), job_id
+  // (migration_crm_vitres_upsell). Si l'une manque, on retente sans elles
+  // plutôt que de perdre le poinçon.
   if (workType) row.work_type = workType
+  if (jobId) row.job_id = jobId
   let { data } = await supabase.from('timesheets').insert(row).select().single()
-  if (!data && workType) {
-    // colonne work_type absente (migration pas encore appliquée) → repli
+  if (!data && (workType || jobId)) {
     delete row.work_type
+    delete row.job_id
     ;({ data } = await supabase.from('timesheets').insert(row).select().single())
   }
   return (data as TimesheetRow) ?? null
 }
 
-export async function clockOut(ts: TimesheetRow, note?: string): Promise<void> {
+export async function clockOut(ts: TimesheetRow, note?: string, jobId?: string | null): Promise<void> {
   const out = new Date().toISOString()
   const hours = hoursBetween(ts.clock_in, out)
-  await supabase
-    .from('timesheets')
-    .update({ clock_out: out, hours, job_note: note ?? ts.job_note })
-    .eq('id', ts.id)
+  const patch: Record<string, unknown> = { clock_out: out, hours, job_note: note ?? ts.job_note }
+  // la job peut avoir été précisée/changée pendant le quart
+  if (jobId !== undefined && jobId !== ts.job_id) patch.job_id = jobId
+  const { error } = await supabase.from('timesheets').update(patch).eq('id', ts.id)
+  if (error && patch.job_id !== undefined) {
+    // colonne job_id absente → on sauve au moins les heures
+    delete patch.job_id
+    await supabase.from('timesheets').update(patch).eq('id', ts.id)
+  }
 }

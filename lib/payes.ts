@@ -2,6 +2,7 @@
 // Payes — helpers semaine + constantes de rémunération (Phase 5).
 // >>> Règles de commission/bonus ajustables ICI <<<
 // ============================================================
+import { serviceByLabel } from './services'
 
 // Taux de commission des techniciens fenêtres (repli si l'employé n'a
 // aucune grille de paye définie sur son profil).
@@ -85,10 +86,19 @@ export const PAY_MODE_BY_ID = Object.fromEntries(PAY_MODES.map((m) => [m.id, m])
 export function autoPayMode(type: string | null, service: string | null, assignedCount: number): PayMode {
   if (type !== 'fenetre') return 'horaire'
   if (assignedCount <= 1) return 'solo'
+  // service choisi dans le menu déroulant → son mode est explicite
+  const known = serviceByLabel(service)
+  if (known) return known.payMode
+  // ancienne saisie libre → on devine sur le texte
   const s = (service ?? '').toLowerCase()
   const hasInt = /int(é|e)rieur|\bint\b/.test(s)
   return hasInt ? 'int_ext_equipe' : 'ext_equipe'
 }
+
+// Les upsells vendus sur le chantier s'ajoutent-ils au prix de la job pour
+// le calcul du % des techniciens ? true = le tech est payé sur le total
+// réellement encaissé (le vendeur touche en plus sa commission de vente).
+export const UPSELL_COUNTS_IN_JOB_BASE = true
 
 // Ce qu'une job verse à UN employé assigné (le % est versé PAR technicien
 // sur le prix complet — cf. technicien.txt : « 350 $ → 63 $ » = 18 % du total).

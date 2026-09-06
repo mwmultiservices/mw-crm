@@ -10,9 +10,9 @@ import AppSettingsForm from '@/components/profil/AppSettingsForm'
 import MapSettingsForm from '@/components/profil/MapSettingsForm'
 import SaleSettingsForm from '@/components/profil/SaleSettingsForm'
 import PasswordSection from '@/components/profil/PasswordSection'
+import MySalarySection from '@/components/profil/MySalarySection'
 import NewEmployeeModal from '@/components/profil/NewEmployeeModal'
 import { getTempPasswords, generateTempPasswords, type TempCredential } from '@/lib/queries/credentials'
-import { payRatesOf, PAY_RATE_FIELDS, money2 } from '@/lib/payes'
 import { isManager } from '@/lib/roles'
 
 // ─── helpers ────────────────────────────────────────────────
@@ -127,38 +127,6 @@ function Spinner() {
         animation: 'mw-spin 0.8s linear infinite',
       }} />
     </div>
-  )
-}
-
-// ─── Ma grille de paye (employé, lecture seule) ─────────────
-
-function MyPayRates({ profile }: { profile: any }) {
-  const rates = payRatesOf(profile)
-  const active = PAY_RATE_FIELDS.filter(f => rates[f.key] > 0)
-  if (active.length === 0) return null
-
-  return (
-    <SettingsSection title="Ma grille de paye" description="Définie par la direction">
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-        {active.map(f => (
-          <div key={f.key} style={{
-            display: 'flex', alignItems: 'center', gap: 12,
-            background: '#F9FAFB', borderRadius: 10, padding: '10px 12px',
-          }}>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <p style={{ color: '#111827', fontWeight: 600, fontSize: 13, margin: 0 }}>{f.label}</p>
-              <p style={{ color: '#9CA3AF', fontSize: 11, margin: '1px 0 0', lineHeight: 1.35 }}>{f.hint}</p>
-            </div>
-            <span style={{
-              color: '#0D6E6F', fontWeight: 800, fontSize: 17, flexShrink: 0,
-              fontVariantNumeric: 'tabular-nums',
-            }}>
-              {f.unit === '%' ? `${rates[f.key]} %` : `${money2(rates[f.key])}/h`}
-            </span>
-          </div>
-        ))}
-      </div>
-    </SettingsSection>
   )
 }
 
@@ -599,6 +567,8 @@ export default function ProfilPage() {
                 <SaleSettingsForm initialSettings={appSettings} onSaved={loadData} />
               </SettingsSection>
 
+              <MySalarySection profile={profile} />
+
               <SettingsSection title="Mon mot de passe" description="Choisis-en un connu de toi seul">
                 <PasswordSection onChanged={loadData} />
               </SettingsSection>
@@ -713,8 +683,8 @@ export default function ProfilPage() {
           </div>
         </SettingsSection>
 
-        {/* Grille de paye (lecture seule) */}
-        <MyPayRates profile={profile} />
+        {/* Salaire + grille de paye (lecture seule) */}
+        <MySalarySection profile={profile} />
 
         {/* Mot de passe */}
         <SettingsSection

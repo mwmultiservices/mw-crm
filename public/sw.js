@@ -1,7 +1,7 @@
 // Service worker MW Multiservices — cache offline léger pour le terrain.
 // Stratégie : statiques immuables = cache-first ; navigations = network-first
 // avec repli sur le cache. JAMAIS les /api ni le cross-origin (Supabase, tuiles).
-const CACHE = 'mw-v1'
+const CACHE = 'mw-v2' // bump = purge du cache (icônes PWA régénérées)
 
 self.addEventListener('install', () => {
   self.skipWaiting()

@@ -2,12 +2,14 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabase'
 import {
-  getOpenTimesheet, clockIn, clockOut, getMyTimesheets, type TimesheetRow,
+  getOpenTimesheet, clockIn, clockOut, getMyTimesheets, timesheetPay, timesheetIsHourly,
+  type TimesheetRow,
 } from '@/lib/queries/payes'
 import { getMyJobsForDay, jobLabel, jobDirectionsUrl, type Job } from '@/lib/queries/calendar'
 import {
   mondayOf, hoursBetween, money2, formatWeekLabel,
-  payRatesOf, hourlyRateFor, WORK_TYPES, EMPTY_RATES, type PayRates, type WorkType,
+  payRatesOf, hourlyRateFor, jobPayFor, PAY_MODE_BY_ID, autoPayMode,
+  WORK_TYPES, EMPTY_RATES, type PayRates, type WorkType,
 } from '@/lib/payes'
 import { Play, Square, Clock, Navigation } from 'lucide-react'
 
@@ -18,6 +20,27 @@ const fmtDay = (d: string) =>
 const todayISO = () => {
   const d = new Date()
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
+/** Mode de paye effectif d'une job (celui fixé par l'admin, sinon déduit). */
+function payModeOf(j: Job) {
+  return (j.pay_mode as ReturnType<typeof autoPayMode> | null) ||
+    autoPayMode(j.type, j.service, j.assigned_ids?.length ?? 0)
+}
+
+/**
+ * Ce que la job rapporte à l'employé : un montant pour les jobs payées au %
+ * (vitres), un taux horaire pour les jobs payées aux heures pointées.
+ */
+function payPreview(j: Job, rates: PayRates): { text: string; percent: boolean } {
+  const { mode, amount, rate } = jobPayFor(j, rates)
+  const meta = PAY_MODE_BY_ID[mode]
+  if (meta.kind === 'hourly') {
+    const h = hourlyRateFor(mode === 'commercial' ? 'commercial' : 'paysagement', rates)
+    return { text: h > 0 ? `${money2(h)}/h` : 'aux heures', percent: false }
+  }
+  if (!j.price) return { text: `${rate || '—'} % (prix à venir)`, percent: true }
+  return { text: `${money2(amount)} · ${rate} %`, percent: true }
 }
 
 /**
@@ -101,8 +124,11 @@ export default function PointagePage() {
     setWeek(w)
     setTodayJobs(js)
     if (o?.work_type === 'commercial' || o?.work_type === 'paysagement') setWorkType(o.work_type)
-    // pré-sélection : la job en cours dans l'horaire (ou celle déjà pointée)
-    const fromOpen = o?.job_note ? js.find((j) => jobLabel(j) === o.job_note) : null
+    // pré-sélection : la job déjà pointée (job_id, sinon repli sur le libellé
+    // pour les poinçons d'avant migration_crm_vitres_upsell), sinon celle en cours.
+    const fromOpen =
+      (o?.job_id ? js.find((j) => j.id === o.job_id) : null) ??
+      (o?.job_note ? js.find((j) => jobLabel(j) === o.job_note) : null)
     setJobId((fromOpen ?? currentJob(js))?.id ?? null)
   }
 
@@ -129,11 +155,21 @@ export default function PointagePage() {
   // ce qui est enregistré dans timesheets.job_note : la job de l'horaire,
   // sinon la note libre (repli quand rien n'est cédulé aujourd'hui)
   const jobNote = selected ? jobLabel(selected) : note
+  const selectedMode = selected ? payModeOf(selected) : null
+
+  // « poinçon réglé pour les jobs du jour » : le type d'heures suit la job
+  // choisie (copro/commercial vs paysagement) au lieu d'être re-coché à la main.
+  useEffect(() => {
+    if (!selectedMode) return
+    const meta = PAY_MODE_BY_ID[selectedMode]
+    if (meta.kind !== 'hourly') return
+    setWorkType(selectedMode === 'commercial' ? 'commercial' : 'paysagement')
+  }, [selectedMode])
 
   const doClockIn = async () => {
     if (!profileId || busy) return
     setBusy(true)
-    await clockIn(profileId, jobNote, workType)
+    await clockIn(profileId, jobNote, workType, jobId)
     setNote('')
     await refresh(profileId)
     setBusy(false)
@@ -141,7 +177,7 @@ export default function PointagePage() {
   const doClockOut = async () => {
     if (!profileId || !open || busy) return
     setBusy(true)
-    await clockOut(open, jobNote || open.job_note || '')
+    await clockOut(open, jobNote || open.job_note || '', jobId)
     setNote('')
     await refresh(profileId)
     setBusy(false)
@@ -152,7 +188,8 @@ export default function PointagePage() {
   const showWorkType = rates.rate_commercial > 0 && rates.rate_commercial !== rates.rate_paysagement
 
   const totalHours = week.reduce((s, r) => s + (Number(r.hours) || 0), 0)
-  const weekPay = week.reduce((s, r) => s + (Number(r.hours) || 0) * hourlyRateFor(r.work_type, rates), 0)
+  // les heures faites sur une job payée au % ne sont pas payées à l'heure
+  const weekPay = week.reduce((s, r) => s + timesheetPay(r, rates), 0)
   const elapsed = open?.clock_in
     ? Math.floor((now - new Date(open.clock_in).getTime()) / 1000)
     : 0
@@ -178,7 +215,7 @@ export default function PointagePage() {
             <div style={{ color: '#A7F3D0', fontSize: 12, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em' }}>En service depuis {fmtTime(open.clock_in)}</div>
             <div style={{ color: '#FFF', fontSize: 44, fontWeight: 800, fontVariantNumeric: 'tabular-nums', margin: '8px 0 16px' }}>{hh}:{mm}:{ss}</div>
             {showWorkType && <WorkTypePicker value={workType} onChange={setWorkType} rates={rates} dark />}
-            <JobPicker jobs={todayJobs} jobId={jobId} onPick={setJobId} note={note} setNote={setNote} dark />
+            <JobPicker jobs={todayJobs} jobId={jobId} onPick={setJobId} note={note} setNote={setNote} rates={rates} dark />
             <button onClick={doClockOut} disabled={busy} style={{ ...bigBtn, background: '#EF4444', color: '#FFF' }}>
               <Square size={18} fill="#FFF" />Clock out
             </button>
@@ -191,7 +228,7 @@ export default function PointagePage() {
             <div style={{ color: '#111827', fontSize: 16, fontWeight: 700, marginBottom: 4 }}>Prêt à commencer</div>
             <div style={{ color: '#6B7280', fontSize: 13, marginBottom: 16 }}>Pointez en arrivant sur le chantier.</div>
             {showWorkType && <WorkTypePicker value={workType} onChange={setWorkType} rates={rates} />}
-            <JobPicker jobs={todayJobs} jobId={jobId} onPick={setJobId} note={note} setNote={setNote} />
+            <JobPicker jobs={todayJobs} jobId={jobId} onPick={setJobId} note={note} setNote={setNote} rates={rates} />
             <button onClick={doClockIn} disabled={busy} style={{ ...bigBtn, background: '#10B981', color: '#FFF' }}>
               <Play size={18} fill="#FFF" />Clock in
             </button>
@@ -221,8 +258,9 @@ export default function PointagePage() {
               </span>
               <span style={{ color: '#6B7280' }}>{fmtTime(r.clock_in)}</span>
               <span style={{ color: '#6B7280' }}>{r.clock_out ? fmtTime(r.clock_out) : '…'}</span>
-              <span style={{ textAlign: 'right', fontWeight: 700, color: '#697035' }}>
+              <span style={{ textAlign: 'right', fontWeight: 700, color: timesheetIsHourly(r) ? '#697035' : '#0D6E6F' }}>
                 {r.clock_out ? `${(Number(r.hours) || 0).toFixed(1)}h` : `${hoursBetween(r.clock_in, new Date().toISOString()).toFixed(1)}h`}
+                {!timesheetIsHourly(r) && <span style={{ display: 'block', fontSize: 9, fontWeight: 700, letterSpacing: '0.04em' }}>COMM.</span>}
               </span>
             </div>
           ))
@@ -240,16 +278,18 @@ export default function PointagePage() {
  * (pré-sélectionnée) au lieu de l'écrire. Repli sur une note libre si rien n'est cédulé.
  * `dark` = rendu sur la carte verte (en service).
  */
-function JobPicker({ jobs, jobId, onPick, note, setNote, dark = false }: {
+function JobPicker({ jobs, jobId, onPick, note, setNote, rates, dark = false }: {
   jobs: Job[]
   jobId: string | null
   onPick: (id: string) => void
   note: string
   setNote: (v: string) => void
+  rates: PayRates
   dark?: boolean
 }) {
   const selected = jobs.find((j) => j.id === jobId) ?? null
   const gps = selected ? jobDirectionsUrl(selected) : null
+  const selectedPay = selected ? payPreview(selected, rates) : null
 
   if (jobs.length === 0) {
     return (
@@ -275,6 +315,7 @@ function JobPicker({ jobs, jobId, onPick, note, setNote, dark = false }: {
       <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
         {jobs.map((j) => {
           const on = j.id === jobId
+          const pay = payPreview(j, rates)
           return (
             <button
               key={j.id}
@@ -290,13 +331,26 @@ function JobPicker({ jobs, jobId, onPick, note, setNote, dark = false }: {
               <span style={{ fontSize: 12, fontWeight: 700, color: dark ? '#A7F3D0' : '#6B7280', flexShrink: 0 }}>
                 {fmtTime(j.start_at)}
               </span>
-              <span style={{ fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              <span style={{ flex: 1, minWidth: 0, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {jobLabel(j)}
+              </span>
+              {/* ce que CETTE job rapporte : % de vitres ou taux horaire */}
+              <span style={{
+                flexShrink: 0, fontSize: 12, fontWeight: 700, whiteSpace: 'nowrap',
+                color: dark ? '#A7F3D0' : (pay.percent ? '#0D6E6F' : '#697035'),
+              }}>
+                {pay.text}
               </span>
             </button>
           )
         })}
       </div>
+      {selectedPay?.percent && (
+        <p style={{ margin: '8px 0 0', fontSize: 11, lineHeight: 1.45, color: dark ? '#A7F3D0' : '#6B7280' }}>
+          Job payée à la commission : le poinçon sert au suivi des heures, la paye
+          vient du % sur le prix de la job (upsells inclus).
+        </p>
+      )}
       {gps && (
         <a
           href={gps}

@@ -211,3 +211,53 @@ export async function getAssignableProfiles(roles: string[]): Promise<AssignProf
     .order('full_name')
   return (data as AssignProfile[]) ?? []
 }
+
+// ============================================================
+// Upsells de job — service vendu PENDANT la job (migration_crm_vitres_upsell).
+// Le vendeur crédité (sold_by) touche sa commission de vente ; le montant
+// s'ajoute au prix de la job pour le % des techniciens (cf. lib/payes.ts,
+// UPSELL_COUNTS_IN_JOB_BASE). error non-null = migration absente.
+// Les noms d'employés sont résolus côté client (getTeamProfiles) : deux FK
+// vers profiles (sold_by / created_by) rendraient l'embed PostgREST ambigu.
+// ============================================================
+
+export interface JobUpsell {
+  id: string
+  job_id: string
+  service: string
+  price: number
+  sold_by: string | null
+  created_by: string | null
+  notes: string | null
+  created_at: string
+}
+
+export async function getJobUpsells(jobId: string): Promise<{ upsells: JobUpsell[]; error: string | null }> {
+  const { data, error } = await supabase
+    .from('job_upsells')
+    .select('*')
+    .eq('job_id', jobId)
+    .order('created_at', { ascending: true })
+  return { upsells: (data as JobUpsell[]) ?? [], error: error?.message ?? null }
+}
+
+export async function addJobUpsell(input: {
+  job_id: string; service: string; price: number; sold_by: string | null; created_by: string | null; notes?: string | null
+}): Promise<{ error: string | null }> {
+  const { error } = await supabase.from('job_upsells').insert(input)
+  return { error: error?.message ?? null }
+}
+
+export async function deleteJobUpsell(id: string): Promise<{ error: string | null }> {
+  const { error } = await supabase.from('job_upsells').delete().eq('id', id)
+  return { error: error?.message ?? null }
+}
+
+// Profils AVEC leur grille de paye (rate_*/pct_*) — pour afficher ce qu'une
+// job rapporte à chaque assigné. '*' : les colonnes de paye n'existent que
+// si migration_crm_salaires.sql est appliquée (payRatesOf tolère l'absence).
+export async function getProfilesWithRates(ids: string[]): Promise<Record<string, unknown>[]> {
+  if (ids.length === 0) return []
+  const { data } = await supabase.from('profiles').select('*').in('id', ids)
+  return (data as Record<string, unknown>[]) ?? []
+}

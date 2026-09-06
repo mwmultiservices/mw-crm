@@ -5,12 +5,12 @@ import { isManager } from '@/lib/roles'
 import {
   getCommissions, markCommissionPaid, computeCommissions,
   getTimesheetsWeek, markTimesheetsPaid,
-  getMyCommission, getMyTimesheets, getDoneJobs,
+  getMyCommission, getMyTimesheets, getDoneJobs, getUpsellsWeek, timesheetPay, timesheetIsHourly,
   type CommissionRow, type EmployeeHours, type TimesheetRow, type DoneJobRow,
 } from '@/lib/queries/payes'
 import {
   mondayOf, addWeeks, formatWeekLabel, periodStartOf, formatPeriodLabel, money, money2,
-  payRatesOf, jobPayFor, hourlyRateFor, PAY_MODE_BY_ID, EMPTY_RATES, WORK_TYPES,
+  payRatesOf, jobPayFor, hourlyRateFor, PAY_MODE_BY_ID, EMPTY_RATES, WORK_TYPES, UPSELL_COUNTS_IN_JOB_BASE,
   type PayRates,
 } from '@/lib/payes'
 import { ChevronLeft, ChevronRight, RefreshCw, Check, Send } from 'lucide-react'
@@ -67,6 +67,8 @@ function AdminPayes({ userId }: { userId: string }) {
   const [rawComms, setRawComms] = useState<CommissionRow[]>([])
   const [hours, setHours] = useState<EmployeeHours[]>([])
   const [doneJobs, setDoneJobs] = useState<DoneJobRow[]>([])
+  // upsells par job : même base de calcul que computeCommissions
+  const [upsellByJob, setUpsellByJob] = useState<Map<string, number>>(new Map())
   const [ratesById, setRatesById] = useState<Map<string, PayRates>>(new Map())
   const [loading, setLoading] = useState(true)
   const [computing, setComputing] = useState(false)
@@ -79,14 +81,18 @@ function AdminPayes({ userId }: { userId: string }) {
 
   const load = useCallback(async () => {
     setLoading(true)
-    const [cA, cB, hA, hB, dj, profs] = await Promise.all([
+    const [cA, cB, hA, hB, dj, ups, profs] = await Promise.all([
       getCommissions(weekOf),
       period ? getCommissions(weekB) : Promise.resolve([] as CommissionRow[]),
       getTimesheetsWeek(weekOf),
       period ? getTimesheetsWeek(weekB) : Promise.resolve([] as EmployeeHours[]),
       getDoneJobs(weekOf, period ? 2 : 1),
+      getUpsellsWeek(weekOf, period ? 2 : 1),
       supabase.from('profiles').select('*'),
     ])
+    const upMap = new Map<string, number>()
+    for (const u of ups) upMap.set(u.job_id, (upMap.get(u.job_id) ?? 0) + (Number(u.price) || 0))
+    setUpsellByJob(upMap)
     setRatesById(new Map((profs.data ?? []).map((p) => [p.id as string, payRatesOf(p)])))
     setRawComms([...cA, ...cB])
     // fusionne les heures des 2 semaines par employé
@@ -188,6 +194,7 @@ function AdminPayes({ userId }: { userId: string }) {
 
   const jobsOf = (profileId: string) => doneJobs.filter((j) => j.assigned_ids?.includes(profileId))
 
+
   return (
     <>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 12 }}>
@@ -273,7 +280,7 @@ function AdminPayes({ userId }: { userId: string }) {
                     </Row>
                   </div>
                   {openRow === c.key && (
-                    <JobsDetail jobs={jobsOf(c.profile_id)} rates={ratesById.get(c.profile_id) ?? EMPTY_RATES} />
+                    <JobsDetail jobs={jobsOf(c.profile_id)} rates={ratesById.get(c.profile_id) ?? EMPTY_RATES} upsellByJob={upsellByJob} />
                   )}
                 </div>
               ))}
@@ -309,13 +316,15 @@ function AdminPayes({ userId }: { userId: string }) {
 // Les jobs au pourcentage affichent ce que CE technicien touche (le % porte sur
 // le prix complet, pas sur une part divisée) ; les jobs horaires renvoient aux
 // feuilles de temps.
-function JobsDetail({ jobs, rates }: { jobs: DoneJobRow[]; rates?: PayRates }) {
+function JobsDetail({ jobs, rates, upsellByJob }: { jobs: DoneJobRow[]; rates?: PayRates; upsellByJob?: Map<string, number> }) {
   if (!jobs.length) return <div style={{ padding: '4px 14px 12px', background: '#F9FAFB', fontSize: 12, color: '#9CA3AF' }}>Aucun job « complété » assigné sur la période.</div>
   const r = rates ?? EMPTY_RATES
   return (
     <div style={{ padding: '0 14px 12px', background: '#F9FAFB' }}>
       {jobs.map((j) => {
-        const { mode, amount } = jobPayFor(j, r)
+        const extra = UPSELL_COUNTS_IN_JOB_BASE ? (upsellByJob?.get(j.id) ?? 0) : 0
+        const base = (Number(j.price) || 0) + extra
+        const { mode, amount } = jobPayFor({ ...j, price: base }, r)
         const meta = PAY_MODE_BY_ID[mode]
         const percent = meta?.kind === 'percent'
         return (
@@ -329,7 +338,7 @@ function JobsDetail({ jobs, rates }: { jobs: DoneJobRow[]; rates?: PayRates }) {
             <span style={{ fontSize: 10, fontWeight: 700, color: '#6B7280', textTransform: 'uppercase', letterSpacing: '0.04em', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
               {meta?.short ?? '—'}{percent ? ` ${r[meta.rate]}%` : ''}
             </span>
-            <span>{money(Number(j.price) || 0)}</span>
+            <span>{money(base)}{extra > 0 ? <span style={{ color: '#0D6E6F', fontWeight: 700 }}> ↑</span> : null}</span>
             <span style={{ textAlign: 'right', fontWeight: 700, color: percent ? '#0D6E6F' : '#9CA3AF' }}>
               {percent ? money(amount) : 'aux heures'}
             </span>
@@ -437,7 +446,8 @@ function PersoPayes({ profileId, role }: { profileId: string; role: string }) {
   }, [profileId, weekOf])
 
   const totalHours = ts.reduce((s, r) => s + (Number(r.hours) || 0), 0)
-  const totalHourPay = ts.reduce((s, r) => s + (Number(r.hours) || 0) * hourlyRateFor(r.work_type, rates), 0)
+  // heures sur une job payée au % = déjà couvertes par la commission
+  const totalHourPay = ts.reduce((s, r) => s + timesheetPay(r, rates), 0)
   const totalComm = comm.reduce((s, c) => s + (Number(c.commission_amount) || 0) + (Number(c.bonus) || 0), 0)
   const isTerrain = role === 'terrain'
 
@@ -500,7 +510,9 @@ function PersoPayes({ profileId, role }: { profileId: string; role: string }) {
                         <span style={{ minWidth: 0 }}>
                           <span style={{ display: 'block', textTransform: 'capitalize', fontWeight: 600, color: '#374151' }}>{new Date(r.date + 'T00:00:00').toLocaleDateString('fr-CA', { weekday: 'short', day: 'numeric', month: 'short' })}</span>
                           <span style={{ display: 'block', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: '#9CA3AF' }}>
-                            {WORK_TYPES.find((w) => w.id === (r.work_type ?? 'paysagement'))?.label ?? 'Paysagement'} · {money2(hourlyRateFor(r.work_type, rates))}
+                            {timesheetIsHourly(r)
+                              ? `${WORK_TYPES.find((w) => w.id === (r.work_type ?? 'paysagement'))?.label ?? 'Paysagement'} · ${money2(hourlyRateFor(r.work_type, rates))}`
+                              : 'Payé à la commission (job de vitres)'}
                           </span>
                         </span>
                         <span>{r.clock_in ? new Date(r.clock_in).toLocaleTimeString('fr-CA', { hour: '2-digit', minute: '2-digit' }) : '—'}</span>

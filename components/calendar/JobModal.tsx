@@ -6,8 +6,11 @@ import { searchClients, fullAddress, type Client } from '@/lib/queries/clients'
 import { GAZON_ROUTES, findRoute, routeLabel } from '@/lib/gazon-routes'
 import { autoFocusDesktop } from '@/lib/ui'
 import { PAY_MODES, PAY_MODE_BY_ID, autoPayMode, type PayMode } from '@/lib/payes'
+import { WINDOW_SERVICES, serviceByLabel } from '@/lib/services'
 import type { Lane, ProfileMini } from './WeekCalendar'
 import JobExtras from './JobExtras'
+import JobUpsells from './JobUpsells'
+import JobPayPanel from './JobPayPanel'
 import { Trash2, Navigation, Phone, Play } from 'lucide-react'
 
 interface Props {
@@ -39,6 +42,8 @@ function timeInput(iso: string | null): string {
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
 }
 const TYPE_OPTIONS = [{ id: 'gazon', l: '🌿 Gazon (route)' }, { id: 'projet', l: '🔨 Projet' }]
+// valeur sentinelle du menu Service : bascule sur une saisie libre
+const AUTRE_SERVICE = '__autre__'
 const TYPE_LABELS: Record<string, string> = Object.fromEntries(TYPE_OPTIONS.map((t) => [t.id, t.l]))
 
 /** « 14:30 » + 2 h → « 16:30 » (borné à 23:59) */
@@ -59,6 +64,13 @@ export default function JobModal({ kind, canEdit = true, userId = null, lanes, a
   const [type, setType] = useState(job?.type ?? (kind === 'fenetre' ? 'fenetre' : 'gazon'))
   const [title, setTitle] = useState(job ? (clientName(job) || job.title || '') : '')
   const [service, setService] = useState(job?.service ?? '')
+  // Fenêtres : le service se choisit dans un menu déroulant (lib/services.ts).
+  // Une valeur hors catalogue (ancienne saisie libre) bascule sur « Autre ».
+  const [serviceFree, setServiceFree] = useState(
+    kind === 'fenetre' && job?.service && !serviceByLabel(job.service) ? true : false,
+  )
+  // total des upsells enregistrés sur cette job (remonté par <JobUpsells>)
+  const [upsellTotal, setUpsellTotal] = useState(0)
   // route de gazon : on stocke l'id de la route (tolère les anciennes valeurs texte libre)
   const [routeName, setRouteName] = useState(findRoute(job?.route_name)?.id ?? '')
   const [address, setAddress] = useState(job?.address ?? '')
@@ -255,7 +267,31 @@ export default function JobModal({ kind, canEdit = true, userId = null, lanes, a
                 </div>
               </Field>
 
-              <Field label="Service"><input value={service} onChange={(e) => setService(e.target.value)} style={inp} placeholder={kind === 'fenetre' ? 'Lavage ext.' : 'Pavé + plate-bandes'} /></Field>
+              <Field label="Service">
+                {kind === 'fenetre' ? (
+                  /* menu déroulant : le service choisi fixe aussi le mode de paye
+                     (ext. / int-ext) quand « Auto » est laissé plus bas. */
+                  <>
+                    <select
+                      value={serviceFree ? AUTRE_SERVICE : service}
+                      onChange={(e) => {
+                        if (e.target.value === AUTRE_SERVICE) { setServiceFree(true); setService('') }
+                        else { setServiceFree(false); setService(e.target.value) }
+                      }}
+                      style={inp}
+                    >
+                      <option value="">— Choisir un service —</option>
+                      {WINDOW_SERVICES.map((s) => <option key={s.id} value={s.label}>{s.label}</option>)}
+                      <option value={AUTRE_SERVICE}>Autre service…</option>
+                    </select>
+                    {serviceFree && (
+                      <input value={service} onChange={(e) => setService(e.target.value)} style={{ ...inp, marginTop: 6 }} placeholder="Décrire le service" />
+                    )}
+                  </>
+                ) : (
+                  <input value={service} onChange={(e) => setService(e.target.value)} style={inp} placeholder="Pavé + plate-bandes" />
+                )}
+              </Field>
 
               <Field label="Adresse">
                 <div style={{ display: 'flex', gap: 6 }}>
@@ -381,7 +417,19 @@ export default function JobModal({ kind, canEdit = true, userId = null, lanes, a
           {error && <div style={{ color: '#991B1B', fontSize: 13 }}>{error}</div>}
         </fieldset>
 
-        {/* photos + dépenses : hors fieldset — les employés y ont accès même en lecture seule */}
+        {/* upsells + paye + photos/dépenses : hors fieldset — les employés y ont
+            accès même en lecture seule (ils vendent et saisissent sur le chantier) */}
+        {isEdit && !isGazon && (
+          <JobUpsells jobId={job!.id} userId={userId} isAdmin={canEdit} onTotalChange={setUpsellTotal} />
+        )}
+        {isEdit && !isGazon && (
+          <JobPayPanel
+            job={{ type, service, price: price ? Number(price) : null, pay_mode: payMode || null, assigned_ids: assigned }}
+            upsellTotal={upsellTotal}
+            userId={userId}
+            isAdmin={canEdit}
+          />
+        )}
         {isEdit && <JobExtras jobId={job!.id} userId={userId} isAdmin={canEdit} showPhotos={!isGazon} />}
 
         <div className="mw-modal-actions">
