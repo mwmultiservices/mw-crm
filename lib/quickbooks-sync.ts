@@ -18,7 +18,16 @@ const CATEGORY_LABELS: Record<string, string> = {
   fenetre: 'Fenêtres', paysagement: 'Paysagement', projet: 'Projet',
 }
 
+// GARDE-FOU : un poste de DÉVELOPPEMENT ne doit jamais effacer la connexion
+// partagée. Ses clés .env.local (sandbox / Development) ne peuvent pas
+// rafraîchir un token créé en production → invalid_grant qui ne dit RIEN sur
+// la santé de la vraie connexion. Sans ce garde, un simple test local
+// déconnecte QuickBooks pour toute l'entreprise.
 async function clearConnection(): Promise<void> {
+  if (process.env.NODE_ENV !== 'production') {
+    console.warn('[QuickBooks] connexion NON effacée : environnement de dev (clés locales ≠ clés de la connexion).')
+    return
+  }
   await supabaseAdmin.from('quickbooks_connection').delete().eq('id', 1)
 }
 
@@ -238,6 +247,43 @@ export async function pushQuoteToQuickBooks(quoteId: string): Promise<PushResult
   await supabaseAdmin.from('quotes').update({ quickbooks_id: qbId }).eq('id', quoteId)
 
   return { ok: true, qbId, docNumber: obj?.DocNumber, entity: isInvoice ? 'Invoice' : 'Estimate' }
+}
+
+// ============================================================
+// Création d'un CLIENT dans QuickBooks (Customer), sans soumission.
+// Utilisé par « Ajouter nouveau » dans le calendrier : le client saisi sur
+// le chantier atterrit tout de suite dans la compta.
+// Idempotent : réutilise le Customer déjà mappé ou le même DisplayName.
+// ============================================================
+
+export interface ClientPushResult {
+  ok: boolean
+  qbId?: string
+  already?: boolean // le client était déjà dans QuickBooks
+  error?: string
+}
+
+export async function pushClientToQuickBooks(clientId: string): Promise<ClientPushResult> {
+  const conn = await getValidConnection()
+  if (!conn) return { ok: false, error: 'QuickBooks non connecté.' }
+
+  const { data: c } = await supabaseAdmin
+    .from('clients')
+    .select('id, name, email, phone, address, city, postal_code, quickbooks_id')
+    .eq('id', clientId)
+    .maybeSingle()
+  if (!c) return { ok: false, error: 'Client introuvable.' }
+  if (!c.name?.trim()) return { ok: false, error: 'Nom du client manquant.' }
+
+  const qbId = await findOrCreateCustomer(conn, {
+    name: c.name.trim(),
+    email: c.email, phone: c.phone,
+    address: c.address, city: c.city, postal: c.postal_code,
+    qbId: c.quickbooks_id,
+  })
+  const already = c.quickbooks_id === qbId
+  if (!already) await supabaseAdmin.from('clients').update({ quickbooks_id: qbId }).eq('id', clientId)
+  return { ok: true, qbId, already }
 }
 
 // ============================================================

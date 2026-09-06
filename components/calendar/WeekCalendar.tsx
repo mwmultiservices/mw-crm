@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { Navigation, Play } from 'lucide-react'
 import { clientName, jobDirectionsUrl, type Job } from '@/lib/queries/calendar'
 import { serviceByLabel } from '@/lib/services'
+import { jobStatusMeta } from '@/lib/job-status'
 import { findRoute } from '@/lib/gazon-routes'
 
 export interface Lane { id: string; label: string; color: string }
@@ -276,9 +277,9 @@ export default function WeekCalendar({
 
                 {placed.map(({ job, top, height, leftPct, widthPct }) => {
                   const mine = !!currentUserId && job.assigned_ids?.includes(currentUserId)
-                  const done = job.status === 'done'
-                  const canceled = job.status === 'canceled'
-                  const dispo = job.status === 'dispo' // slot mauve « à vendre »
+                  // couleur = statut (confirmée jaune · pending orange · dispo mauve · done vert)
+                  const st = jobStatusMeta(job.status)
+                  const canceled = st.id === 'canceled'
                   const gpsUrl = jobDirectionsUrl(job)
                   const route = job.type === 'gazon' ? findRoute(job.route_name) : null
                   const compact = height < 56
@@ -303,9 +304,9 @@ export default function WeekCalendar({
                         position: 'absolute', top, height,
                         left: `calc(${leftPct}% + 2px)`, width: `calc(${widthPct}% - 4px)`,
                         textAlign: 'left', overflow: 'hidden',
-                        border: dispo ? '1px solid #8B5CF6' : `1px solid ${mine ? lane.color : '#E5E7EB'}`,
-                        borderLeft: `3px solid ${dispo ? '#8B5CF6' : lane.color}`, borderRadius: 8,
-                        background: dispo ? '#F5F3FF' : mine ? lane.color + '1F' : '#FFF',
+                        border: `1px solid ${mine ? lane.color : st.color + '66'}`,
+                        borderLeft: `4px solid ${st.color}`, borderRadius: 8,
+                        background: st.bg,
                         boxShadow: '0 1px 2px rgba(16,24,40,0.06)',
                         padding: compact ? '2px 5px' : '4px 6px', cursor: 'pointer', opacity: canceled ? 0.5 : 1,
                         zIndex: 1,
@@ -314,9 +315,9 @@ export default function WeekCalendar({
                       <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
                         <div style={{ fontSize: 10, fontWeight: 700, color: '#374151', whiteSpace: 'nowrap', overflow: 'hidden' }}>
                           {fmtTime(job.start_at)}{job.end_at && !compact ? `–${fmtTime(job.end_at)}` : ''}
-                          {done && <span style={{ marginLeft: 4, color: '#10B981' }}>✓</span>}
-                          {canceled && <span style={{ marginLeft: 4, textDecoration: 'line-through' }}>annulé</span>}
-                          {dispo && <span style={{ marginLeft: 4, padding: '0 5px', borderRadius: 999, background: '#8B5CF6', color: '#FFF', fontSize: 9, fontWeight: 800 }}>DISPO</span>}
+                          {st.id !== 'confirmed' && (
+                            <span style={{ marginLeft: 4, padding: '0 5px', borderRadius: 999, background: st.color, color: '#FFF', fontSize: 9, fontWeight: 800 }}>{st.short}</span>
+                          )}
                         </div>
                         {route ? (
                           <Link

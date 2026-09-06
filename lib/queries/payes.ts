@@ -124,7 +124,9 @@ export async function computeCommissions(weekOf: string): Promise<{ reps: number
   const [{ data: profiles }, { data: wonLeads }, { data: jobs }, { data: existing }, upsells] = await Promise.all([
     supabase.from('profiles').select('*'),
     supabase.from('leads').select('rep_id, price').eq('stage', 'won').gte('updated_at', startISO).lt('updated_at', endISO),
-    supabase.from('jobs').select('*').eq('type', 'fenetre').eq('status', 'done').gte('start_at', startISO).lt('start_at', endISO),
+    // fenêtres ET projets : les fenêtres paient un % aux techniciens, les deux
+    // peuvent porter un vendeur (jobs.sold_by) à commissionner.
+    supabase.from('jobs').select('*').in('type', ['fenetre', 'projet']).eq('status', 'done').gte('start_at', startISO).lt('start_at', endISO),
     supabase.from('commissions').select('profile_id, type, paid').eq('week_of', weekOf),
     getUpsellsWeek(weekOf),
   ])
@@ -157,6 +159,19 @@ export async function computeCommissions(weekOf: string): Promise<{ reps: number
     a.base += Number(u.price) || 0
     a.deals += 1
     repAgg.set(u.sold_by, a)
+  }
+
+  // vendeur (« closer ») désigné sur une job complétée (vitres ou projet) :
+  // le prix de la job entre dans SES ventes de la semaine.
+  // Job issue d'un lead (lead_id) → ignorée : la commission a déjà été versée
+  // sur le lead gagné, on ne paie pas deux fois la même vente.
+  for (const j of jobs ?? []) {
+    const seller = (j as { sold_by?: string | null }).sold_by
+    if (!seller || j.lead_id) continue
+    const a = repAgg.get(seller) ?? { base: 0, deals: 0 }
+    a.base += Number(j.price) || 0
+    a.deals += 1
+    repAgg.set(seller, a)
   }
 
   const repUpserts: Record<string, unknown>[] = []
@@ -249,6 +264,7 @@ export interface DoneJobRow {
   price: number | null
   assigned_ids: string[]
   pay_mode?: string | null
+  sold_by?: string | null // vendeur crédité (migration_crm_job_vendeur)
 }
 
 // Jobs complétés (« done ») sur `weeks` semaine(s) à partir de weekOf — tous

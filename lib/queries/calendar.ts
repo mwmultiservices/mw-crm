@@ -23,9 +23,10 @@ export interface Job {
   start_at: string | null
   end_at: string | null
   all_day: boolean
-  status: string // scheduled | done | canceled | dispo (slot mauve à vendre)
+  status: string // cf. lib/job-status.ts (confirmed | pending | dispo | done | canceled ; 'scheduled' = legacy)
   price: number | null
   pay_mode?: string | null // null = déduit (cf. autoPayMode dans lib/payes)
+  sold_by?: string | null  // vendeur (« closer ») — commission de vente
   notes: string | null
   clients?: { name: string } | { name: string }[] | null
 }
@@ -101,6 +102,7 @@ export interface JobInput {
   status?: string
   price?: number | null
   pay_mode?: string | null
+  sold_by?: string | null
   notes?: string | null
   client_id?: string | null
   lead_id?: string | null

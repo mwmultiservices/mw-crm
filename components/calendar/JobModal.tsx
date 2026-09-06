@@ -1,5 +1,5 @@
 'use client'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import { createJob, updateJob, deleteJob, clientName, type Job, type JobInput, type AssignProfile } from '@/lib/queries/calendar'
 import { searchClients, fullAddress, type Client } from '@/lib/queries/clients'
@@ -7,11 +7,13 @@ import { GAZON_ROUTES, findRoute, routeLabel } from '@/lib/gazon-routes'
 import { autoFocusDesktop } from '@/lib/ui'
 import { PAY_MODES, PAY_MODE_BY_ID, autoPayMode, type PayMode } from '@/lib/payes'
 import { WINDOW_SERVICES, serviceByLabel } from '@/lib/services'
+import { JOB_STATUSES, jobStatusMeta, normalizeJobStatus } from '@/lib/job-status'
 import type { Lane, ProfileMini } from './WeekCalendar'
 import JobExtras from './JobExtras'
 import JobUpsells from './JobUpsells'
 import JobPayPanel from './JobPayPanel'
-import { Trash2, Navigation, Phone, Play } from 'lucide-react'
+import NewClientModal from './NewClientModal'
+import { Trash2, Navigation, Phone, Play, UserPlus } from 'lucide-react'
 
 interface Props {
   kind: 'fenetre' | 'paysagement'
@@ -84,7 +86,10 @@ export default function JobModal({ kind, canEdit = true, userId = null, lanes, a
   const [price, setPrice] = useState(job?.price != null ? String(job.price) : '')
   // '' = auto (déduit du type/service/nb d'assignés au moment du calcul de paye)
   const [payMode, setPayMode] = useState<string>(job?.pay_mode ?? '')
-  const [status, setStatus] = useState(job?.status ?? 'scheduled')
+  // 'scheduled' (ancienne valeur en base) → « Job confirmée » ; nouveau job = confirmée
+  const [status, setStatus] = useState<string>(normalizeJobStatus(job?.status))
+  // vendeur (« closer ») : sa commission de vente tombe dans sa paye
+  const [soldBy, setSoldBy] = useState<string>(job?.sold_by ?? '')
   const [notes, setNotes] = useState(job?.notes ?? '')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -99,7 +104,16 @@ export default function JobModal({ kind, canEdit = true, userId = null, lanes, a
   const [clientId, setClientId] = useState<string | null>(job?.client_id ?? null)
   const [suggestions, setSuggestions] = useState<Client[]>([])
   const [showSug, setShowSug] = useState(false)
+  const [newClient, setNewClient] = useState(false) // modal « Ajouter nouveau »
+  const [flash, setFlash] = useState('')            // ex. « client créé, QuickBooks ignoré »
   const skipSearch = useRef(false) // évite de rouvrir la liste juste après un choix
+
+  // Vendeurs possibles : toute l'équipe (n'importe qui peut closer une vente).
+  const sellerOptions = useMemo(() => {
+    const fromMap = Object.entries(profileMap).map(([id, p]) => ({ id, full_name: p.full_name }))
+    const list = fromMap.length ? fromMap : assignProfiles.map((p) => ({ id: p.id, full_name: p.full_name }))
+    return list.sort((a, b) => (a.full_name ?? '').localeCompare(b.full_name ?? ''))
+  }, [profileMap, assignProfiles])
 
   useEffect(() => {
     if (isGazon) return
@@ -129,6 +143,15 @@ export default function JobModal({ kind, canEdit = true, userId = null, lanes, a
     skipSearch.current = false
     setTitle(v)
     setClientId(null) // saisie manuelle = nouveau nom, plus de client rattaché
+  }
+
+  // fiche créée depuis « Ajouter nouveau » : on la rattache tout de suite au job
+  const onClientCreated = (c: Client, quickbooks: 'ok' | 'skipped', qbError?: string) => {
+    setNewClient(false)
+    pickClient(c)
+    setFlash(quickbooks === 'ok'
+      ? `Client « ${c.name} » créé dans le CRM et dans QuickBooks.`
+      : `Client « ${c.name} » créé dans le CRM. QuickBooks non synchronisé${qbError ? ` (${qbError})` : ''}.`)
   }
 
   const toggleAssign = (id: string) =>
@@ -162,6 +185,8 @@ export default function JobModal({ kind, canEdit = true, userId = null, lanes, a
       payload.client_email = clientEmail.trim() || null
     }
     if (payMode || job?.pay_mode != null) payload.pay_mode = payMode || null
+    // jobs.sold_by : colonne récente (migration_crm_job_vendeur) — omise si vide
+    if (!isGazon && (soldBy || job?.sold_by != null)) payload.sold_by = soldBy || null
     const { error: e } = isEdit ? await updateJob(job!.id, payload) : await createJob(payload)
     setSaving(false)
     if (e) { setError(e); return }
@@ -182,6 +207,12 @@ export default function JobModal({ kind, canEdit = true, userId = null, lanes, a
     <div onClick={onClose} className="mw-modal-overlay">
       <div onClick={(e) => e.stopPropagation()} className="mw-modal-card" style={{ width: 'min(460px, 100%)' }}>
         <h2 style={{ fontSize: 18, fontWeight: 700, color: '#111827', margin: '0 0 16px' }}>{ro ? 'Détails du job' : isEdit ? 'Modifier le job' : 'Nouveau job'}</h2>
+
+        {flash && (
+          <div style={{ background: '#ECFDF5', color: '#065F46', border: '1px solid #A7F3D0', borderRadius: 10, padding: '9px 12px', fontSize: 12, marginBottom: 12, lineHeight: 1.45 }}>
+            {flash}
+          </div>
+        )}
 
         {/* gazon : ouvre la run filtrée sur CETTE route (l'employé ne voit que la sienne) */}
         {isEdit && isGazon && routeName && (
@@ -232,7 +263,7 @@ export default function JobModal({ kind, canEdit = true, userId = null, lanes, a
                   <input
                     value={title}
                     onChange={(e) => onTitleChange(e.target.value)}
-                    onFocus={() => suggestions.length && setShowSug(true)}
+                    onFocus={() => { if (title.trim().length >= 2) setShowSug(true) }}
                     onBlur={() => setTimeout(() => setShowSug(false), 150)}
                     style={inp}
                     autoFocus={autoFocusDesktop()}
@@ -242,11 +273,12 @@ export default function JobModal({ kind, canEdit = true, userId = null, lanes, a
                   {clientId && (
                     <span style={{ position: 'absolute', right: 8, top: 9, fontSize: 10, fontWeight: 800, color: '#0E6B6E', background: '#69C9CA1F', padding: '2px 7px', borderRadius: 999 }}>CLIENT</span>
                   )}
-                  {showSug && suggestions.length > 0 && (
+                  {/* la liste s'ouvre même sans résultat : « Ajouter nouveau » y vit */}
+                  {showSug && !clientId && (suggestions.length > 0 || title.trim().length >= 2) && (
                     <div style={{
                       position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 5, marginTop: 4,
                       background: '#FFF', border: '1px solid #E5E7EB', borderRadius: 10, overflow: 'hidden',
-                      boxShadow: '0 8px 20px rgba(0,0,0,0.10)', maxHeight: 200, overflowY: 'auto',
+                      boxShadow: '0 8px 20px rgba(0,0,0,0.10)', maxHeight: 240, overflowY: 'auto',
                     }}>
                       {suggestions.map((c) => (
                         <button
@@ -262,6 +294,26 @@ export default function JobModal({ kind, canEdit = true, userId = null, lanes, a
                           )}
                         </button>
                       ))}
+                      {title.trim().length >= 2 && (
+                        <button
+                          type="button"
+                          onMouseDown={(e) => e.preventDefault()}
+                          onClick={() => { setShowSug(false); setNewClient(true) }}
+                          style={{
+                            display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left',
+                            padding: '10px', border: 'none', borderTop: '1px solid #E5E7EB',
+                            background: '#69C9CA14', color: '#0E6B6E', cursor: 'pointer',
+                          }}
+                        >
+                          <UserPlus size={15} />
+                          <span style={{ fontSize: 13, fontWeight: 700 }}>
+                            Ajouter nouveau
+                            <span style={{ display: 'block', fontSize: 11, fontWeight: 500, color: '#6B7280' }}>
+                              « {title.trim()} » — enregistré dans le CRM et QuickBooks
+                            </span>
+                          </span>
+                        </button>
+                      )}
                     </div>
                   )}
                 </div>
@@ -348,17 +400,41 @@ export default function JobModal({ kind, canEdit = true, userId = null, lanes, a
 
           {!isGazon && (
             <Field label="Mode de paye">
+              {/* deux choix au quotidien : commission (défaut) ou taux horaire
+                  copro/commercial. Le détail (solo / ext / int-ext) se déduit
+                  du service et du nombre d'assignés, et reste forçable en bas. */}
               <select value={payMode} onChange={(e) => setPayMode(e.target.value)} style={inp}>
-                <option value="">Auto — {PAY_MODE_BY_ID[autoMode].label}</option>
-                {PAY_MODES.map((m) => (
-                  <option key={m.id} value={m.id}>{m.label}</option>
-                ))}
+                <option value="">
+                  {PAY_MODE_BY_ID[autoMode].kind === 'percent'
+                    ? `💰 Commission (défaut) — ${PAY_MODE_BY_ID[autoMode].short}`
+                    : `⏱ Horaire paysagement (défaut)`}
+                </option>
+                <option value="commercial">🏢 Copropriété / Commercial — à l&apos;heure</option>
+                <optgroup label="Forcer un taux précis">
+                  {PAY_MODES.filter((m) => m.id !== 'commercial').map((m) => (
+                    <option key={m.id} value={m.id}>{m.label}</option>
+                  ))}
+                </optgroup>
               </select>
               <p style={{ margin: '5px 2px 0', fontSize: 11, color: '#9CA3AF', lineHeight: 1.45 }}>
                 {PAY_MODE_BY_ID[effectiveMode].kind === 'percent'
                   ? `Chaque technicien assigné touche son % ${PAY_MODE_BY_ID[effectiveMode].short.toLowerCase()} du prix complet.`
                   : 'Payé aux heures pointées, pas au prix de la job.'}
-                {' '}Auto = solo si un seul assigné, sinon équipe.
+                {' '}Commission = solo si un seul assigné, sinon équipe (ext. ou int/ext selon le service).
+              </p>
+            </Field>
+          )}
+
+          {!isGazon && (
+            <Field label="Vendeur (closer)">
+              <select value={soldBy} onChange={(e) => setSoldBy(e.target.value)} style={inp}>
+                <option value="">— Aucun —</option>
+                {sellerOptions.map((p) => (
+                  <option key={p.id} value={p.id}>{p.full_name ?? '—'}{p.id === userId ? ' (moi)' : ''}</option>
+                ))}
+              </select>
+              <p style={{ margin: '5px 2px 0', fontSize: 11, color: '#9CA3AF', lineHeight: 1.45 }}>
+                Sa commission de vente (% de son profil) tombe dans sa paye quand la job passe à « done ».
               </p>
             </Field>
           )}
@@ -401,14 +477,15 @@ export default function JobModal({ kind, canEdit = true, userId = null, lanes, a
           </Field>
 
           <Field label="Statut">
+            {/* couleurs partagées avec la carte du calendrier (lib/job-status.ts) */}
             <select value={status} onChange={(e) => setStatus(e.target.value)} style={{
               ...inp,
-              ...(status === 'dispo' ? { borderColor: '#8B5CF6', background: '#F5F3FF', color: '#6D28D9', fontWeight: 600 } : null),
+              borderColor: jobStatusMeta(status).color,
+              background: jobStatusMeta(status).bg,
+              color: jobStatusMeta(status).text,
+              fontWeight: 600,
             }}>
-              <option value="scheduled">Cédulé</option>
-              <option value="dispo">🟣 Slot dispo (à vendre)</option>
-              <option value="done">Complété</option>
-              <option value="canceled">Annulé</option>
+              {JOB_STATUSES.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
             </select>
           </Field>
 
@@ -425,6 +502,7 @@ export default function JobModal({ kind, canEdit = true, userId = null, lanes, a
         {isEdit && !isGazon && (
           <JobPayPanel
             job={{ type, service, price: price ? Number(price) : null, pay_mode: payMode || null, assigned_ids: assigned }}
+            soldBy={soldBy || null}
             upsellTotal={upsellTotal}
             userId={userId}
             isAdmin={canEdit}
@@ -448,6 +526,14 @@ export default function JobModal({ kind, canEdit = true, userId = null, lanes, a
           )}
         </div>
       </div>
+
+      {newClient && (
+        <NewClientModal
+          initialName={title}
+          onCancel={() => setNewClient(false)}
+          onCreated={onClientCreated}
+        />
+      )}
     </div>
   )
 }

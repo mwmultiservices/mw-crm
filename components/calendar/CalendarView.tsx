@@ -4,6 +4,7 @@ import { supabase } from '@/lib/supabase'
 import { isManager } from '@/lib/roles'
 import { mondayOf, addWeeks, formatWeekLabel } from '@/lib/payes'
 import { getJobsWeek, getAssignableProfiles, updateJob, type Job, type AssignProfile } from '@/lib/queries/calendar'
+import { JOB_STATUSES } from '@/lib/job-status'
 import WeekCalendar, { type Lane, type ProfileMini } from './WeekCalendar'
 import JobModal from './JobModal'
 import { ChevronLeft, ChevronRight, Plus } from 'lucide-react'
@@ -129,6 +130,16 @@ export default function CalendarView({ kind }: { kind: 'fenetre' | 'paysagement'
             <button onClick={() => setModal({ date: mondayOf(), team: 'equipe1' })} style={addBtn}><Plus size={16} />Job</button>
           )}
         </div>
+      </div>
+
+      {/* légende des couleurs de statut (source : lib/job-status.ts) */}
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginBottom: 12 }}>
+        {JOB_STATUSES.filter((s) => s.id !== 'canceled').map((s) => (
+          <span key={s.id} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11, fontWeight: 600, color: '#6B7280' }}>
+            <span style={{ width: 10, height: 10, borderRadius: 3, background: s.color, display: 'inline-block' }} />
+            {s.label.replace(/^\S+\s/, '')}
+          </span>
+        ))}
       </div>
 
       {loading ? (

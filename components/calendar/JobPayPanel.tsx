@@ -23,6 +23,8 @@ interface Props {
     pay_mode?: string | null
     assigned_ids?: string[] | null
   }
+  /** vendeur (« closer ») crédité de la commission de vente */
+  soldBy?: string | null
   /** somme des upsells enregistrés sur la job */
   upsellTotal?: number
   userId: string | null
@@ -35,10 +37,11 @@ interface Line {
   rates: PayRates
 }
 
-export default function JobPayPanel({ job, upsellTotal = 0, userId, isAdmin }: Props) {
+export default function JobPayPanel({ job, soldBy = null, upsellTotal = 0, userId, isAdmin }: Props) {
   const [lines, setLines] = useState<Line[] | null>(null)
   const ids = job.assigned_ids ?? []
-  const key = ids.join(',')
+  // le vendeur n'est pas forcément assigné à la job : on charge sa grille aussi
+  const key = [...new Set([...ids, ...(soldBy ? [soldBy] : [])])].join(',')
 
   useEffect(() => {
     const list = key ? key.split(',') : []
@@ -57,11 +60,17 @@ export default function JobPayPanel({ job, upsellTotal = 0, userId, isAdmin }: P
 
   if (!lines || lines.length === 0) return null
 
-  const visible = isAdmin ? lines : lines.filter((l) => l.id === userId)
-  if (visible.length === 0) return null
+  const techLines = lines.filter((l) => ids.includes(l.id))
+  const visible = isAdmin ? techLines : techLines.filter((l) => l.id === userId)
+  const seller = soldBy ? lines.find((l) => l.id === soldBy) ?? null : null
+  const sellerVisible = seller && (isAdmin || seller.id === userId)
+  if (visible.length === 0 && !sellerVisible) return null
 
   const base = (Number(job.price) || 0) + (UPSELL_COUNTS_IN_JOB_BASE ? upsellTotal : 0)
   const jobForPay = { ...job, price: base }
+  // la commission de vente porte sur le prix de la job (les upsells ont leur
+  // propre vendeur, crédité séparément par computeCommissions)
+  const sellerAmount = seller ? Math.round((Number(job.price) || 0) * seller.rates.pct_vente) / 100 : 0
 
   return (
     <div style={{ marginTop: 14, borderTop: '1px solid #E5E7EB', paddingTop: 12 }}>
@@ -93,6 +102,20 @@ export default function JobPayPanel({ job, upsellTotal = 0, userId, isAdmin }: P
           </div>
         )
       })}
+
+      {sellerVisible && seller && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 0', borderTop: '1px solid #F3F4F6', fontSize: 13 }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <span style={{ fontWeight: 600, color: '#111827' }}>{seller.name}{seller.id === userId ? ' (moi)' : ''}</span>
+            <span style={{ display: 'block', fontSize: 11, color: '#9CA3AF' }}>
+              {seller.rates.pct_vente > 0
+                ? `Vendeur (closer) · ${seller.rates.pct_vente} % du prix de la job`
+                : 'Vendeur (closer) — aucun % de vente défini sur son profil'}
+            </span>
+          </div>
+          <strong style={{ color: '#8D5D36', whiteSpace: 'nowrap' }}>{money2(sellerAmount)}</strong>
+        </div>
+      )}
 
       {base > 0 && (
         <p style={{ margin: '6px 0 0', fontSize: 11, color: '#9CA3AF', lineHeight: 1.45 }}>

@@ -96,9 +96,33 @@ export interface ClientInput {
   superficie_pi2?: number | null
 }
 
-export async function createClient(input: ClientInput): Promise<{ error: string | null }> {
-  const { error } = await supabase.from('clients').insert(input)
-  return { error: error?.message ?? null }
+// Retourne l'id créé (nécessaire pour rattacher la job / pousser dans QuickBooks).
+export async function createClient(input: ClientInput): Promise<{ id: string | null; error: string | null }> {
+  const { data, error } = await supabase.from('clients').insert(input).select(COLS).single()
+  return { id: (data as Client | null)?.id ?? null, error: error?.message ?? null }
+}
+
+// Crée le client ET le pousse dans QuickBooks (Customer). L'enregistrement CRM
+// fait foi : si QuickBooks n'est pas connecté/configuré, le client est quand
+// même créé et on remonte simplement un avertissement.
+export async function createClientEverywhere(
+  input: ClientInput,
+): Promise<{ client: Client | null; error: string | null; quickbooks: 'ok' | 'skipped'; qbError?: string }> {
+  const { data, error } = await supabase.from('clients').insert(input).select(COLS).single()
+  if (error) return { client: null, error: error.message, quickbooks: 'skipped' }
+  const client = data as Client
+  try {
+    const res = await fetch('/api/quickbooks/client', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ clientId: client.id }),
+    })
+    const json = await res.json().catch(() => ({}))
+    if (res.ok && json.ok) return { client, error: null, quickbooks: 'ok' }
+    return { client, error: null, quickbooks: 'skipped', qbError: json.error ?? `HTTP ${res.status}` }
+  } catch (e) {
+    return { client, error: null, quickbooks: 'skipped', qbError: e instanceof Error ? e.message : 'réseau' }
+  }
 }
 export async function updateClient(id: string, input: ClientInput): Promise<{ error: string | null }> {
   const { error } = await supabase.from('clients').update(input).eq('id', id)
