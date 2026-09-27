@@ -12,6 +12,7 @@ import {
   createTerrain, updateTerrain, deleteTerrain, reorderTerrains, getFaitEverIds,
   getNotesForDate, addNote, deleteNote, optimizeRoute,
   terrainDirectionsUrl, gazonRouteSegments, SHOP_ADDRESS,
+  nextStopUrl, shopNavUrl, needsGeocode, geocodeTerrains,
   type GazonTerrain, type GazonPassage, type GazonTerrainInput, type GazonNote,
 } from '@/lib/queries/gazon'
 import { uploadPhoto, photoUrl, deletePhoto } from '@/lib/storage'
@@ -19,7 +20,7 @@ import { autoFocusDesktop } from '@/lib/ui'
 import {
   ChevronLeft, ChevronRight, ChevronDown, Plus, Navigation, Phone, Camera,
   Check, AlertTriangle, X, Trash2, Route, Table2, ListChecks, ArrowLeft,
-  Sparkles, GripVertical, Pencil, StickyNote, ClipboardList, Loader2, Lock,
+  Sparkles, GripVertical, Pencil, StickyNote, ClipboardList, Loader2, Lock, Home,
 } from 'lucide-react'
 
 // Début de saison (1re semaine du fichier du client) — borne gauche du datasheet.
@@ -130,6 +131,7 @@ function GazonRun() {
   const [noteFor, setNoteFor] = useState<{ terrain: GazonTerrain; why?: boolean } | null>(null)
   const [reportOpen, setReportOpen] = useState(false)
   const [showNotDue, setShowNotDue] = useState(false)
+  const [showSegments, setShowSegments] = useState(false) // secours : itinéraire par tranches de 10
 
   // --- optimisation Google ---
   const [optimize, setOptimize] = useState(false)
@@ -189,14 +191,29 @@ function GazonRun() {
 
   // realtime : un coéquipier coche / note → tout le monde voit
   useEffect(() => {
+    // Le géocodage met à jour des dizaines de terrains d'affilée : un seul
+    // rechargement pour la rafale au lieu d'un par ligne.
+    let terrainsTimer: ReturnType<typeof setTimeout> | undefined
     const ch = supabase
       .channel('gazon')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'gazon_passages' }, () => loadPassages(weekOf))
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'gazon_terrains' }, () => loadTerrains())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'gazon_terrains' }, () => {
+        clearTimeout(terrainsTimer)
+        terrainsTimer = setTimeout(loadTerrains, 500)
+      })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'gazon_notes' }, () => loadNotes())
       .subscribe()
-    return () => { supabase.removeChannel(ch) }
+    return () => { clearTimeout(terrainsTimer); supabase.removeChannel(ch) }
   }, [weekOf, loadPassages, loadTerrains, loadNotes])
+
+  // « FAIT » ouvre Google Maps : l'app passe en arrière-plan pendant que le
+  // passage s'enregistre. Au retour, on relit la semaine pour confirmer
+  // (ou défaire) la coche optimiste si l'écriture a été interrompue.
+  useEffect(() => {
+    const onVisible = () => { if (document.visibilityState === 'visible') loadPassages(weekOf) }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => document.removeEventListener('visibilitychange', onVisible)
+  }, [weekOf, loadPassages])
 
   // secteurs bruts dans l'ordre de la run (position globale) — pour le modal terrain
   const secteurs = useMemo(() => {
@@ -222,6 +239,18 @@ function GazonRun() {
     if (lockedRoute) return key === lockedRoute.id
     return groupFilter === 'Tous' || key === groupFilter
   }), [terrains, groupFilter, lockedRoute])
+
+  // Coordonnées GPS pour « Prochain client » : géocode UNE fois les terrains
+  // affichés dont l'adresse n'a pas encore été géocodée sous sa forme actuelle.
+  // Le ref empêche de redemander les mêmes ids pendant la session (échec,
+  // clé absente…) ; le serveur ignore de toute façon les terrains à jour.
+  const geocodeAsked = useRef<Set<string>>(new Set())
+  useEffect(() => {
+    const ids = visible.filter((t) => needsGeocode(t) && !geocodeAsked.current.has(t.id)).map((t) => t.id)
+    if (!ids.length) return
+    ids.forEach((id) => geocodeAsked.current.add(id))
+    geocodeTerrains(ids).then(({ updated }) => { if (updated) loadTerrains() })
+  }, [visible, loadTerrains])
 
   // fréquence : le terrain fait-il partie de la run de CETTE semaine ?
   const due = useMemo(() => {
@@ -360,18 +389,36 @@ function GazonRun() {
     setOptimize(next)
   }
 
-  // Itinéraire : les reprises d'abord, puis les terrains restants, dans l'ordre
-  // affiché. Découpé en segments de 10 arrêts (limite du deep link Google Maps).
-  // Recalculé sur les terrains RESTANTS : cocher FAIT fait avancer les segments.
-  const segments = useMemo(() => {
+  // Arrêts RESTANTS de la tournée, dans l'ordre affiché : les reprises
+  // d'abord, puis les terrains dus sans passage cette semaine. Sont exclus :
+  // les « à ne pas faire » (annulés), les terrains déjà FAIT et ceux cochés
+  // À ÉVITER aujourd'hui (sautés) — un évité d'un jour PRÉCÉDENT revient en
+  // reprise. Source commune de « Prochain client » et des tranches de 10.
+  const routeStops = useMemo(() => {
     const pending = dueList.filter((t) => !t.a_eviter && !passages.get(t.id))
-    if (optimize && optOrder.size) return gazonRouteSegments(pending) // Google a déjà tout ordonné
-    return gazonRouteSegments([...retakes.map((r) => r.t), ...pending.filter((t) => !retakeIds.has(t.id))])
+    if (optimize && optOrder.size) return pending // Google a déjà tout ordonné
+    return [...retakes.map((r) => r.t), ...pending.filter((t) => !retakeIds.has(t.id))]
   }, [dueList, passages, retakes, retakeIds, optimize, optOrder])
+
+  // Secours : itinéraire multi-arrêts découpé en tranches de 10 (limite du
+  // deep link Google Maps). Recalculé sur les arrêts restants.
+  const segments = useMemo(() => gazonRouteSegments(routeStops), [routeStops])
+
+  // Prochain client = 1er arrêt restant qui a une destination (coordonnées
+  // ou adresse). Seulement pour la semaine en cours.
+  const isThisWeek = weekOf === mondayOf()
+  const navigable = useMemo(() => routeStops.filter((t) => nextStopUrl(t)), [routeStops])
+  const nextStop = isThisWeek ? navigable[0] ?? null : null
 
   const toggle = async (t: GazonTerrain, status: 'fait' | 'evite') => {
     const current = passages.get(t.id)
     const undo = current?.status === status
+    // Vue employé (run verrouillée) : FAIT enchaîne directement sur le client
+    // suivant — un seul appui par client. Calculé et ouvert AVANT tout await :
+    // hors du geste utilisateur, iOS/Safari bloque l'ouverture de Maps.
+    const goNext = lockedRoute && isThisWeek && !undo && status === 'fait'
+      ? navigable.find((x) => x.id !== t.id) ?? null
+      : null
     // maj optimiste
     const next = new Map(passages)
     if (undo) next.delete(t.id)
@@ -380,9 +427,11 @@ function GazonRun() {
     // « À éviter » sans explication ne sert à rien au bureau : on ouvre tout de
     // suite la note du jour pour que l'employé dise POURQUOI il a sauté le terrain.
     if (!undo && status === 'evite') setNoteFor({ terrain: t, why: true })
-    const { error } = undo
-      ? await clearPassage(t.id, weekOf)
-      : await setPassage(t.id, weekOf, status, userId)
+    // L'écriture part AVANT d'ouvrir Maps (l'app passe ensuite en arrière-plan ;
+    // le retour au premier plan relit la semaine, cf. visibilitychange).
+    const write = undo ? clearPassage(t.id, weekOf) : setPassage(t.id, weekOf, status, userId)
+    if (goNext) window.open(nextStopUrl(goNext)!, '_blank', 'noopener')
+    const { error } = await write
     if (error) loadPassages(weekOf)
   }
 
@@ -422,6 +471,7 @@ function GazonRun() {
   const cardProps = (t: GazonTerrain, reason?: string) => ({
     t, reason,
     passage: passages.get(t.id),
+    isNext: t.id === nextStop?.id,
     notes: notes.get(t.id) ?? [],
     onToggle: toggle,
     onOpen: () => setModal({ terrain: t }),
@@ -481,50 +531,86 @@ function GazonRun() {
             )}
             {!optLoading && !optimize && 'Ordre manuel'}
           </span>
-          <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
-            {segments.length > 0 && (
-              <a
-                href={segments[0].url}
-                target="_blank"
-                rel="noopener noreferrer"
-                title={segments.length > 1
-                  ? `Les 10 premiers arrêts. Coche-les FAIT, puis reprends ce bouton pour les 10 suivants.`
-                  : `Retour au shop à la fin (${SHOP_ADDRESS})`}
-                style={{ ...addBtn, textDecoration: 'none', background: GREEN, color: '#FFF' }}
-              >
-                <Route size={15} />
-                {segments.length > 1 ? `Itinéraire · arrêts ${segments[0].from}–${segments[0].to}` : 'Itinéraire restant'}
-              </a>
-            )}
-            {admin && <button onClick={startEdit} style={{ ...addBtn, background: '#F3F4F6', color: '#374151' }}><Pencil size={15} />Réordonner</button>}
-          </div>
+          {admin && (
+            <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+              <button onClick={startEdit} style={{ ...addBtn, background: '#F3F4F6', color: '#374151' }}><Pencil size={15} />Réordonner</button>
+            </div>
+          )}
         </div>
       )}
 
-      {/* Google Maps plafonne un trajet à 10 arrêts : on découpe la run en
-          parties et on l'explique noir sur blanc à l'équipe. */}
-      {view === 'run' && !editMode && segments.length > 1 && (
-        <div style={{ background: '#F6F7EE', border: `1px solid ${GREEN}33`, borderRadius: 10, padding: '10px 12px', marginBottom: 10 }}>
-          <div style={{ fontSize: 12, color: '#3F4A1E', lineHeight: 1.5, marginBottom: 8 }}>
-            <strong>Google Maps prend 10 arrêts à la fois.</strong> Fais les arrêts {segments[0].from}–{segments[0].to},
-            coche-les <strong>FAIT</strong>, puis reprends le bouton vert : il te donnera les 10 suivants automatiquement.
-            Ou saute directement à une partie :
-          </div>
-          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-            {segments.map((seg, i) => (
-              <a
-                key={i}
-                href={seg.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                style={{ ...segBtn, ...(i === 0 ? { background: GREEN, color: '#FFF', borderColor: GREEN } : null) }}
-              >
-                {seg.from === 0
-                  ? 'Retour au shop'
-                  : `${i + 1}. Arrêts ${seg.from}–${seg.to}${seg.endsAtShop ? ' → shop' : ''}`}
-              </a>
-            ))}
-          </div>
+      {/* Prochain client : UNE destination à la fois, navigation lancée. En vue
+          employé, cocher FAIT y enchaîne tout seul. */}
+      {view === 'run' && !editMode && isThisWeek && (nextStop ? (
+        <a
+          href={nextStopUrl(nextStop)!}
+          target="_blank"
+          rel="noopener noreferrer"
+          style={{
+            display: 'flex', alignItems: 'center', gap: 12, padding: '12px 14px', marginBottom: 10,
+            borderRadius: 12, background: TEAL, color: '#FFF', textDecoration: 'none',
+          }}
+        >
+          <Navigation size={22} style={{ flexShrink: 0 }} />
+          <span style={{ flex: 1, minWidth: 0 }}>
+            <span style={{ display: 'block', fontSize: 15, fontWeight: 800 }}>Prochain client</span>
+            <span style={{ display: 'block', fontSize: 12, opacity: 0.9, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              {nextStop.name}{nextStop.address ? ` — ${nextStop.address}` : ''}
+            </span>
+          </span>
+          <span style={{ flexShrink: 0, fontSize: 11, fontWeight: 700, background: '#FFFFFF26', borderRadius: 999, padding: '3px 8px' }}>
+            {navigable.length} restant{navigable.length > 1 ? 's' : ''}
+          </span>
+        </a>
+      ) : aFaire.length > 0 && routeStops.length === 0 ? (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', background: '#F6F7EE', border: `1px solid ${GREEN}33`, borderRadius: 12, padding: '10px 12px', marginBottom: 10 }}>
+          <span style={{ fontSize: 13, fontWeight: 700, color: '#3F4A1E' }}>🎉 Run terminée</span>
+          <a href={shopNavUrl()} target="_blank" rel="noopener noreferrer" style={{ ...addBtn, marginLeft: 'auto', textDecoration: 'none', background: GREEN, color: '#FFF' }}>
+            <Home size={15} />Retour au shop
+          </a>
+        </div>
+      ) : null)}
+
+      {view === 'run' && !editMode && isThisWeek && routeStops.length > navigable.length && (
+        <div style={{ background: '#FFFBEB', color: '#92400E', padding: '8px 12px', borderRadius: 10, fontSize: 12, marginBottom: 10 }}>
+          Sans adresse, donc hors navigation : {routeStops.filter((t) => !nextStopUrl(t)).map((t) => t.name).join(', ')}.
+        </div>
+      )}
+
+      {/* Secours : l'ancien itinéraire multi-arrêts, découpé en tranches de 10
+          (Google Maps plafonne un lien à 9 étapes + la destination). */}
+      {view === 'run' && !editMode && segments.length > 0 && (
+        <div style={{ marginBottom: 10 }}>
+          <button onClick={() => setShowSegments((v) => !v)} style={{
+            display: 'flex', alignItems: 'center', gap: 6, background: 'none', border: 'none', padding: '2px 0',
+            cursor: 'pointer', fontSize: 12, fontWeight: 700, color: '#6B7280',
+          }}>
+            {showSegments ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+            <Route size={13} />Secours : itinéraire complet par tranches de 10
+          </button>
+          {showSegments && (
+            <div style={{ background: '#F6F7EE', border: `1px solid ${GREEN}33`, borderRadius: 10, padding: '10px 12px', marginTop: 6 }}>
+              <div style={{ fontSize: 12, color: '#3F4A1E', lineHeight: 1.5, marginBottom: 8 }}>
+                <strong>Google Maps prend 10 arrêts à la fois.</strong> Fais une tranche, coche les terrains <strong>FAIT</strong>,
+                puis reprends la 1re tranche : elle passe automatiquement aux arrêts suivants. Fin de parcours au shop ({SHOP_ADDRESS}).
+              </div>
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                {segments.map((seg, i) => (
+                  <a
+                    key={i}
+                    href={seg.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{ ...segBtn, ...(i === 0 ? { background: GREEN, color: '#FFF', borderColor: GREEN } : null) }}
+                  >
+                    {seg.from === 0
+                      ? 'Retour au shop'
+                      : `${i + 1}. Arrêts ${seg.from}–${seg.to}${seg.endsAtShop ? ' → shop' : ''}`}
+                  </a>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -671,9 +757,10 @@ function GazonRun() {
 // ============================================================
 // Carte terrain — FAIT / À ÉVITER + GPS + tél + note du jour
 // ============================================================
-function TerrainCard({ t, passage, reason, notDueReason, step, muted, notes, onToggle, onOpen, onNote }: {
+function TerrainCard({ t, passage, isNext, reason, notDueReason, step, muted, notes, onToggle, onOpen, onNote }: {
   t: GazonTerrain
   passage: GazonPassage | undefined
+  isNext?: boolean         // cible actuelle du bouton « Prochain client »
   reason?: string          // pourquoi ce terrain est remonté en tête de run
   notDueReason?: string | null // pourquoi il est hors cycle cette semaine
   step?: number            // rang dans l'ordre optimisé
@@ -689,7 +776,7 @@ function TerrainCard({ t, passage, reason, notDueReason, step, muted, notes, onT
   const freq = freqOf(t.frequency_type)
   return (
     <div style={{
-      background: '#FFF', border: `1px solid ${fait ? GREEN + '66' : evite ? ORANGE + '66' : '#E5E7EB'}`,
+      background: '#FFF', border: isNext ? `2px solid ${TEAL}` : `1px solid ${fait ? GREEN + '66' : evite ? ORANGE + '66' : '#E5E7EB'}`,
       borderRadius: 12, padding: '10px 12px', opacity: t.a_eviter || muted ? 0.7 : 1,
     }}>
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
@@ -703,6 +790,7 @@ function TerrainCard({ t, passage, reason, notDueReason, step, muted, notes, onT
         <div role="button" tabIndex={0} onClick={onOpen} style={{ flex: 1, minWidth: 0, cursor: 'pointer' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
             <span style={{ fontSize: 14, fontWeight: 700, color: '#111827' }}>{t.name}</span>
+            {isNext && <Badge color={TEAL}>▶ PROCHAIN</Badge>}
             {reason && <Badge color={ORANGE}>🔁 {reason}</Badge>}
             {notDueReason && <Badge color="#6B7280">{notDueReason}</Badge>}
             {t.a_eviter && <Badge color="#DC2626">À NE PAS FAIRE</Badge>}

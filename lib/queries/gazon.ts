@@ -23,6 +23,10 @@ export interface GazonTerrain {
   a_eviter: boolean
   active: boolean
   client_id: string | null
+  // GPS (migration_crm_gazon_coords.sql) — absents tant qu'elle n'est pas appliquée
+  lat?: number | null
+  lng?: number | null
+  geocoded_address?: string | null // adresse complète géocodée ; ≠ adresse actuelle = périmé
 }
 
 export interface GazonPassage {
@@ -155,6 +159,67 @@ export function terrainDirectionsUrl(t: Pick<GazonTerrain, 'address' | 'secteur'
   const dest = fullTerrainAddress(t.address, t.secteur)
   if (!dest) return null
   return `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(dest)}`
+}
+
+// ============================================================
+// « Prochain client » — UNE seule destination, navigation lancée.
+//
+// Remplace le lien multi-arrêts pour l'usage courant : pas de plafond de
+// 10 arrêts, et l'app Maps part de la position réelle du camion (pas
+// d'`origin`). Destination en « lat,lng » quand les coordonnées sont à jour
+// (géocodage précis, cf. /api/gazon/geocode) ; sinon l'adresse complète en
+// texte, que Maps résout lui-même.
+// ============================================================
+type NavTerrain = Pick<GazonTerrain, 'address' | 'secteur' | 'lat' | 'lng' | 'geocoded_address'>
+
+// Coordonnées valides = géocodées à partir de l'adresse ACTUELLE.
+export function terrainCoords(t: NavTerrain): { lat: number; lng: number } | null {
+  if (t.lat == null || t.lng == null) return null
+  if (t.geocoded_address !== fullTerrainAddress(t.address, t.secteur)) return null
+  return { lat: t.lat, lng: t.lng }
+}
+
+// À (re)géocoder : adresse présente, mais jamais géocodée sous sa forme actuelle.
+// Colonne absente (migration pas appliquée) → rien à faire.
+export function needsGeocode(t: NavTerrain): boolean {
+  if (!('geocoded_address' in t)) return false
+  const full = fullTerrainAddress(t.address, t.secteur)
+  return !!full && t.geocoded_address !== full
+}
+
+export function nextStopUrl(t: NavTerrain): string | null {
+  const c = terrainCoords(t)
+  const dest = c ? `${c.lat},${c.lng}` : encodeURIComponent(fullTerrainAddress(t.address, t.secteur))
+  if (!dest) return null
+  return `https://www.google.com/maps/dir/?api=1&destination=${dest}&travelmode=driving&dir_action=navigate`
+}
+
+// Retour au shop en fin de run (même forme que nextStopUrl).
+export function shopNavUrl(): string {
+  return `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(SHOP_ADDRESS)}&travelmode=driving&dir_action=navigate`
+}
+
+// Demande au serveur de géocoder ces terrains. Best-effort : une erreur
+// (clé absente, migration pas appliquée) laisse simplement l'adresse texte.
+export async function geocodeTerrains(ids: string[]): Promise<{ updated: number; error: string | null }> {
+  let updated = 0
+  try {
+    // le serveur traite 50 terrains par appel et dit combien il en reste
+    for (let pass = 0; pass < 4 && ids.length; pass++) {
+      const res = await fetch('/api/gazon/geocode', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids }),
+      })
+      const json = await res.json().catch(() => null)
+      if (!res.ok) return { updated, error: json?.error ?? `Erreur ${res.status}` }
+      updated += json?.updated ?? 0
+      if (!json?.remaining) break
+    }
+    return { updated, error: null }
+  } catch (e) {
+    return { updated, error: e instanceof Error ? e.message : 'Réseau indisponible' }
+  }
 }
 
 // Shop MW Multiservices — défini dans lib/gazon-routes (module sans dépendance,
