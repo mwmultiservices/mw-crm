@@ -22,6 +22,7 @@ import {
   Check, AlertTriangle, X, Trash2, Route, Table2, ListChecks, ArrowLeft,
   Sparkles, GripVertical, Pencil, StickyNote, ClipboardList, Loader2, Lock, Home,
 } from 'lucide-react'
+import AddressPreviewButton from '@/components/ui/AddressPreviewButton'
 
 // Début de saison (1re semaine du fichier du client) — borne gauche du datasheet.
 const SEASON_START = '2026-05-04'
@@ -1474,6 +1475,7 @@ function TerrainModal({ terrain, secteurs, admin, onClose, onSaved }: {
               </a>
             )}
           </div>
+          <AddressPreviewButton parts={[fullTerrainAddress(address, newSect.trim() || sect)]} />
         </Field>
 
         <div style={{ display: 'flex', gap: 10 }}>

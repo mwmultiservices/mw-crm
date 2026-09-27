@@ -5,6 +5,7 @@ import { X, Phone, MapPin, Search, Plus, User, ChevronLeft, ChevronRight, FileTe
 import { getPinBadge } from '@/lib/colors'
 import DoorForm from '@/components/DoorForm'
 import { isManager } from '@/lib/roles'
+import AddressPreviewButton from '@/components/ui/AddressPreviewButton'
 
 // ─── constants ────────────────────────────────────────────────────────────────
 
@@ -370,6 +371,7 @@ function AddClientModal({ onClose, onSaved }: { onClose: () => void; onSaved: ()
           </Field>
           <Field label="Adresse">
             <input type="text" value={address} onChange={e => setAddress(e.target.value)} placeholder="123 Rue Principale, Montréal" style={fi} {...fx} />
+            <AddressPreviewButton parts={[address]} />
           </Field>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
             <Field label="Service">

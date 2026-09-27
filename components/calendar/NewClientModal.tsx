@@ -3,6 +3,7 @@ import { useState } from 'react'
 import { createClientEverywhere, type Client } from '@/lib/queries/clients'
 import { autoFocusDesktop } from '@/lib/ui'
 import { UserPlus } from 'lucide-react'
+import AddressPreviewButton from '@/components/ui/AddressPreviewButton'
 
 // ============================================================
 // « Ajouter nouveau » depuis l'autocomplétion client du calendrier.
@@ -87,6 +88,7 @@ export default function NewClientModal({ initialName = '', onCancel, onCreated }
           </div>
           <Field label="Adresse">
             <input value={address} onChange={(e) => setAddress(e.target.value)} style={inp} placeholder="123 rue Principale" />
+            <AddressPreviewButton parts={[address, city, postal]} />
           </Field>
           <div style={{ display: 'flex', gap: 10 }}>
             <Field label="Ville" flex>

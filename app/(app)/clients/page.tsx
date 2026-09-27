@@ -12,6 +12,7 @@ import {
 import { STATUS_BY_ID } from '@/lib/queries/soumissions'
 import { Plus, Search, Users, Navigation, Phone, Mail, MapPin, X, Trash2, Pencil, RefreshCw } from 'lucide-react'
 import { autoFocusDesktop } from '@/lib/ui'
+import AddressPreviewButton from '@/components/ui/AddressPreviewButton'
 
 const SERVICE_LABELS: Record<string, string> = { fenetre: 'Fenêtres', paysagement: 'Paysagement', projet: 'Projet' }
 const SERVICE_COLORS: Record<string, string> = { fenetre: '#69C9CA', paysagement: '#697035', projet: '#8D5D36' }
@@ -305,7 +306,10 @@ function ClientModal({ client, onClose, onSaved }: { client: Client | null; onCl
         <h2 style={{ fontSize: 18, fontWeight: 700, color: '#111827', margin: '0 0 16px' }}>{isEdit ? 'Modifier le client' : 'Nouveau client'}</h2>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
           <Field label="Nom *"><input value={name} onChange={(e) => setName(e.target.value)} style={inp} autoFocus={autoFocusDesktop()} /></Field>
-          <Field label="Adresse"><input value={address} onChange={(e) => setAddress(e.target.value)} style={inp} placeholder="245 rue des Pins" /></Field>
+          <Field label="Adresse">
+            <input value={address} onChange={(e) => setAddress(e.target.value)} style={inp} placeholder="245 rue des Pins" />
+            <AddressPreviewButton parts={[address, city, postal]} />
+          </Field>
           <div style={{ display: 'flex', gap: 10 }}>
             <Field label="Ville" flex><input value={city} onChange={(e) => setCity(e.target.value)} style={inp} /></Field>
             <Field label="Code postal" flex><input value={postal} onChange={(e) => setPostal(e.target.value)} style={inp} /></Field>
