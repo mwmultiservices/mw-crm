@@ -122,6 +122,23 @@ function missingColumn(message: string): string | null {
   return /Could not find the '([a-z_]+)' column/.exec(message)?.[1] ?? null
 }
 
+// La colonne existe-t-elle déjà dans `jobs` ? Sert à AVERTIR dans le modal
+// quand une saisie serait jetée par saveJob (migration pas appliquée).
+// Une erreur réseau ou autre ≠ colonne absente → true (pas de fausse alerte).
+// Mémorisé pour la session : une migration appliquée entre-temps est vue au
+// prochain chargement de page.
+const jobColumnProbe = new Map<string, Promise<boolean>>()
+export function jobsHasColumn(col: string): Promise<boolean> {
+  let probe = jobColumnProbe.get(col)
+  if (!probe) {
+    probe = Promise.resolve(supabase.from('jobs').select(col).limit(1))
+      .then(({ error }) => !(error && /does not exist|Could not find/i.test(error.message)))
+      .catch(() => true)
+    jobColumnProbe.set(col, probe)
+  }
+  return probe
+}
+
 // Enregistre en retirant les colonnes que la base ne connaît pas encore
 // (migration pas appliquée) : on préfère sauver la job sans ce champ plutôt
 // que de perdre toute la saisie. Max 4 passes = 4 colonnes récentes.

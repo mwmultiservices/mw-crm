@@ -7,7 +7,7 @@ import {
 } from '@/lib/pipeline'
 import LeadDrawer from '@/components/pipeline/LeadDrawer'
 import PushToggle from '@/components/PushToggle'
-import { Plus, KanbanSquare } from 'lucide-react'
+import { Plus, KanbanSquare, Search, X } from 'lucide-react'
 import { autoFocusDesktop } from '@/lib/ui'
 
 const money = (n: number) =>
@@ -18,6 +18,21 @@ const money = (n: number) =>
 const LEAD_COLS = '*'
 
 interface Profile { id: string; full_name: string | null }
+
+// minuscules sans accents : « Hélène » se trouve en tapant « helene »
+function norm(s: string | null | undefined): string {
+  return (s ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+}
+
+// Le lead correspond-il à la recherche ? Nom, courriel, service, et téléphone
+// comparé chiffres seulement (« 514 555 » trouve « (514) 555-0101 »).
+function matchesSearch(lead: Lead, query: string): boolean {
+  const q = norm(query).trim()
+  if (!q) return true
+  if ([lead.name, lead.email, lead.service].some((f) => norm(f).includes(q))) return true
+  const digits = q.replace(/\D/g, '')
+  return digits.length >= 3 && (lead.phone ?? '').replace(/\D/g, '').includes(digits)
+}
 
 function relDate(iso: string): string {
   const d = Math.floor((Date.now() - new Date(iso).getTime()) / 86400000)
@@ -30,6 +45,7 @@ export default function PipelinePage() {
   const [leads, setLeads] = useState<Lead[]>([])
   const [profiles, setProfiles] = useState<Profile[]>([])
   const [repFilter, setRepFilter] = useState<string>('all')
+  const [search, setSearch] = useState('')
   const [selected, setSelected] = useState<Lead | null>(null)
   const [showNew, setShowNew] = useState(false)
   const [loading, setLoading] = useState(true)
@@ -74,11 +90,17 @@ export default function PipelinePage() {
   }, [role, userId, loadLeads])
 
   const visibleLeads = useMemo(() => {
-    if (!manager || repFilter === 'all') return leads
-    return leads.filter((l) => l.rep_id === repFilter)
-  }, [leads, manager, repFilter])
+    const byRep = !manager || repFilter === 'all' ? leads : leads.filter((l) => l.rep_id === repFilter)
+    return search.trim() ? byRep.filter((l) => matchesSearch(l, search)) : byRep
+  }, [leads, manager, repFilter, search])
 
-  const columns = useMemo(() => leadsToColumns(visibleLeads), [visibleLeads])
+  const searching = search.trim().length > 0
+  // en recherche, seules les colonnes qui ont un résultat restent : sur
+  // téléphone un lead « Gagné » serait sinon caché tout au bout du défilement.
+  const columns = useMemo(() => {
+    const all = leadsToColumns(visibleLeads)
+    return searching ? all.filter((c) => c.leads.length > 0) : all
+  }, [visibleLeads, searching])
 
   // maj optimiste du stage (le drawer a déjà écrit en DB)
   const handleStageChange = (leadId: string, stage: string) => {
@@ -107,11 +129,13 @@ export default function PipelinePage() {
   }
 
   return (
-    <div style={{ fontFamily: 'Inter, sans-serif', padding: '12px 16px 84px' }}>
+    <div style={{ fontFamily: 'Inter, sans-serif', padding: '12px 16px var(--mw-page-pb)' }}>
       {/* en-tête */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 18 }}>
         <h1 style={{ fontSize: 24, fontWeight: 700, color: '#111827', margin: 0 }}>Pipeline</h1>
-        <span style={{ color: '#6B7280', fontSize: 13 }}>{visibleLeads.length} leads</span>
+        <span style={{ color: '#6B7280', fontSize: 13 }}>
+          {searching ? `${visibleLeads.length} résultat${visibleLeads.length > 1 ? 's' : ''}` : `${visibleLeads.length} leads`}
+        </span>
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
           <PushToggle />
           {manager && (
@@ -124,6 +148,34 @@ export default function PipelinePage() {
         </div>
       </div>
 
+      {/* recherche par nom (remplace l'ancienne « Base D2D ») */}
+      {leads.length > 0 && (
+        <div style={{ position: 'relative', maxWidth: 520, marginBottom: 16 }}>
+          <Search size={16} color="#9CA3AF" style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none' }} />
+          {/* type="text" + role : type="search" ajoute son propre « × » natif */}
+          <input
+            type="text"
+            role="searchbox"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            // Entrée avec un seul résultat → ouvre directement le lead
+            onKeyDown={(e) => { if (e.key === 'Enter' && visibleLeads.length === 1) setSelected(visibleLeads[0]) }}
+            placeholder="Rechercher un nom, un téléphone, un courriel…"
+            aria-label="Rechercher un lead"
+            autoComplete="off"
+            enterKeyHint="search"
+            style={{ ...inp, padding: '10px 36px', fontSize: 15, borderRadius: 10, boxSizing: 'border-box' }}
+          />
+          {searching && (
+            <button onClick={() => setSearch('')} aria-label="Effacer la recherche" style={{
+              position: 'absolute', right: 6, top: '50%', transform: 'translateY(-50%)', width: 28, height: 28,
+              display: 'flex', alignItems: 'center', justifyContent: 'center', border: 'none', borderRadius: 999,
+              background: '#F3F4F6', color: '#6B7280', cursor: 'pointer', padding: 0,
+            }}><X size={15} /></button>
+          )}
+        </div>
+      )}
+
       {loading ? (
         <div style={{ color: '#9CA3AF', fontSize: 14, padding: 40, textAlign: 'center' }}>Chargement…</div>
       ) : leads.length === 0 ? (
@@ -131,6 +183,12 @@ export default function PipelinePage() {
           <KanbanSquare size={28} />
           <span style={{ fontSize: 14 }}>Aucun lead pour l&apos;instant.</span>
           <button onClick={() => setShowNew(true)} style={primaryBtn}><Plus size={16} />Créer le premier lead</button>
+        </div>
+      ) : searching && visibleLeads.length === 0 ? (
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10, padding: '48px 0', color: '#9CA3AF' }}>
+          <Search size={26} />
+          <span style={{ fontSize: 14, textAlign: 'center' }}>Aucun lead ne correspond à « {search.trim()} ».</span>
+          <button onClick={() => setSearch('')} style={{ ...primaryBtn, background: '#F3F4F6', color: '#374151' }}>Effacer la recherche</button>
         </div>
       ) : (
         <div style={{ display: 'flex', gap: 12, overflowX: 'auto', paddingBottom: 12 }}>

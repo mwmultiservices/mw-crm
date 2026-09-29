@@ -12,7 +12,7 @@ import { MapPin } from 'lucide-react'
 // sont ignorés. Sans adresse, le bouton est grisé.
 //
 // Utilisé par : ClientModal (/clients), NewClientModal (calendrier),
-// Ajouter un client (/base-de-donnees), TerrainModal (/gazon).
+// TerrainModal (/gazon), ClientModal de Run fermeture.
 // ============================================================
 
 export function mapsSearchUrl(query: string): string {

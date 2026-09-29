@@ -1,13 +1,13 @@
 'use client'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useRouter, usePathname } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import Link from 'next/link'
 import Image from 'next/image'
-import { LogOut } from 'lucide-react'
+import { LogOut, X } from 'lucide-react'
 import AppHeader from '@/components/AppHeader'
 import RefreshButton from '@/components/RefreshButton'
-import { navForRole, mobileNavForRole, type NavItem } from '@/lib/nav'
+import { navForRole, type NavItem } from '@/lib/nav'
 import { isManager } from '@/lib/roles'
 
 const ROLE_LABEL: Record<string, string> = {
@@ -26,7 +26,8 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   const [profile, setProfile] = useState<{ role: string; secondary_role: string | null; full_name: string | null; color: string | null } | null>(null)
   const [userId, setUserId] = useState<string | null>(null)
   const [unread, setUnread] = useState(0)
-  const activeLinkRef = useRef<HTMLAnchorElement>(null)
+  // menu ☰ (téléphone/tablette) — remplace l'ancien bottom-nav
+  const [menuOpen, setMenuOpen] = useState(false)
 
   // Verrouille le document pendant toute la durée de vie du shell : plus aucun
   // défilement/rubber-band de la page entière (header et bottom-nav restent figés).
@@ -88,10 +89,37 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     else nav.clearAppBadge?.().catch(() => {})
   }, [unread])
 
-  // Amène l'item actif du bottom-nav dans le champ visible (rôles avec >5 items → défilement)
+  // Échap ferme le menu ☰
   useEffect(() => {
-    activeLinkRef.current?.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' })
-  }, [pathname])
+    if (!menuOpen) return
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setMenuOpen(false) }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [menuOpen])
+
+  // iOS : quand le clavier se referme, la vue reste parfois décalée vers le haut
+  // (haut de l'app sous la barre d'état, bande vide en bas). Le document est
+  // verrouillé (mw-app-locked) et ne doit jamais défiler : dès qu'aucun champ
+  // n'a plus le focus, on le recale à 0.
+  useEffect(() => {
+    const typing = () => !!document.activeElement?.matches(
+      'input:not([type=checkbox]):not([type=radio]):not([type=button]):not([type=submit]), textarea, select, [contenteditable="true"]')
+    let t: ReturnType<typeof setTimeout> | undefined
+    const realign = () => {
+      clearTimeout(t)
+      t = setTimeout(() => {
+        if (!typing() && (window.scrollY !== 0 || window.scrollX !== 0)) window.scrollTo(0, 0)
+      }, 150)
+    }
+    const vv = window.visualViewport
+    window.addEventListener('focusout', realign)
+    vv?.addEventListener('resize', realign)
+    return () => {
+      clearTimeout(t)
+      window.removeEventListener('focusout', realign)
+      vv?.removeEventListener('resize', realign)
+    }
+  }, [])
 
   const logout = async () => {
     await supabase.auth.signOut()
@@ -115,15 +143,14 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     </div>
   )
 
-  const sections    = navForRole(profile.role, profile.secondary_role)
-  const mobileItems = mobileNavForRole(profile.role, profile.secondary_role)
+  const sections = navForRole(profile.role, profile.secondary_role)
   const initials = (profile.full_name ?? '?').split(' ').map(s => s[0]).slice(0, 2).join('').toUpperCase()
 
-  const navLinkDesktop = (item: NavItem) => {
+  const navLink = (item: NavItem) => {
     const active = isActive(pathname, item.href)
     const { Icon } = item
     return (
-      <Link key={item.href + item.label} href={item.href} style={{
+      <Link key={item.href + item.label} href={item.href} onClick={() => setMenuOpen(false)} style={{
         display: 'flex', alignItems: 'center', gap: 11, padding: '9px 12px',
         borderRadius: 9, textDecoration: 'none', marginBottom: 2,
         background: active ? 'rgba(105,201,202,0.14)' : 'transparent',
@@ -144,78 +171,73 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     )
   }
 
+  // Contenu commun à la sidebar (bureau) et au menu ☰ (téléphone/tablette)
+  const navBody = (
+    <>
+      <nav style={{ flex: 1, padding: '4px 12px 12px' }}>
+        {sections.map(section => (
+          <div key={section.title} style={{ marginBottom: 16 }}>
+            <div style={{
+              fontSize: 10, fontWeight: 700, letterSpacing: '0.08em',
+              textTransform: 'uppercase', color: '#4B5563', padding: '0 12px 6px',
+            }}>{section.title}</div>
+            {section.items.map(navLink)}
+          </div>
+        ))}
+      </nav>
+      {/* Footer utilisateur */}
+      <div style={{ borderTop: '1px solid rgba(255,255,255,0.08)', padding: '12px 14px', display: 'flex', alignItems: 'center', gap: 10 }}>
+        <div style={{
+          width: 32, height: 32, borderRadius: '50%', flexShrink: 0,
+          background: profile.color ?? '#69C9CA', color: '#000',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          fontSize: 12, fontWeight: 700,
+        }}>{initials}</div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 12.5, fontWeight: 600, color: '#fff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{profile.full_name}</div>
+          <div style={{ fontSize: 10.5, color: '#6B7280' }}>{ROLE_LABEL[profile.role] ?? profile.role}</div>
+        </div>
+        <button onClick={logout} title="Déconnexion" aria-label="Déconnexion" style={{
+          background: 'transparent', border: 'none', cursor: 'pointer',
+          color: '#6B7280', display: 'flex', padding: 4,
+        }}><LogOut size={17} /></button>
+      </div>
+    </>
+  )
+
   return (
     <div className="mw-shell">
-      {/* ───────── Sidebar (desktop) ───────── */}
+      {/* ───────── Sidebar (bureau : souris + écran large) ───────── */}
       <aside className="mw-sidebar">
         <div style={{ padding: '20px 18px 14px' }}>
           <Image src="/logo-mw.svg" alt="MW Multiservices" width={132} height={40}
             style={{ filter: 'brightness(0) invert(1)' }} priority />
         </div>
-        <nav style={{ flex: 1, padding: '4px 12px 12px' }}>
-          {sections.map(section => (
-            <div key={section.title} style={{ marginBottom: 16 }}>
-              <div style={{
-                fontSize: 10, fontWeight: 700, letterSpacing: '0.08em',
-                textTransform: 'uppercase', color: '#4B5563', padding: '0 12px 6px',
-              }}>{section.title}</div>
-              {section.items.map(navLinkDesktop)}
-            </div>
-          ))}
-        </nav>
-        {/* Footer utilisateur */}
-        <div style={{ borderTop: '1px solid rgba(255,255,255,0.08)', padding: '12px 14px', display: 'flex', alignItems: 'center', gap: 10 }}>
-          <div style={{
-            width: 32, height: 32, borderRadius: '50%', flexShrink: 0,
-            background: profile.color ?? '#69C9CA', color: '#000',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            fontSize: 12, fontWeight: 700,
-          }}>{initials}</div>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 12.5, fontWeight: 600, color: '#fff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{profile.full_name}</div>
-            <div style={{ fontSize: 10.5, color: '#6B7280' }}>{ROLE_LABEL[profile.role] ?? profile.role}</div>
-          </div>
-          <button onClick={logout} title="Déconnexion" style={{
-            background: 'transparent', border: 'none', cursor: 'pointer',
-            color: '#6B7280', display: 'flex', padding: 4,
-          }}><LogOut size={17} /></button>
+        {navBody}
+      </aside>
+
+      {/* ───────── Menu ☰ (téléphone ET tablette) ─────────
+          Même contenu que la sidebar ; glisse depuis la gauche. */}
+      <div className={`mw-navdrawer-overlay${menuOpen ? ' open' : ''}`} onClick={() => setMenuOpen(false)} />
+      <aside className={`mw-navdrawer${menuOpen ? ' open' : ''}`} aria-hidden={!menuOpen}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 10px 14px 18px' }}>
+          <Image src="/logo-mw.svg" alt="MW Multiservices" width={120} height={36}
+            style={{ filter: 'brightness(0) invert(1)' }} />
+          <button onClick={() => setMenuOpen(false)} aria-label="Fermer le menu" style={{
+            width: 40, height: 40, display: 'flex', alignItems: 'center', justifyContent: 'center',
+            background: 'transparent', border: 'none', borderRadius: 10, color: '#9CA3AF', cursor: 'pointer', padding: 0,
+          }}><X size={22} /></button>
         </div>
+        {navBody}
       </aside>
 
       {/* ───────── Main ───────── */}
       <div className="mw-main">
-        <div className="mw-header-mobile"><AppHeader /></div>
+        <div className="mw-header-mobile">
+          <AppHeader menuOpen={menuOpen} onMenu={() => setMenuOpen(true)} badge={unread} />
+        </div>
         <main className="mw-content">{children}</main>
         <RefreshButton />
-
-        {/* Bottom-nav (mobile) — défile horizontalement si plus d'items que l'écran n'en affiche */}
-        <nav className="mw-bottomnav">
-          {mobileItems.map(({ href, label, Icon }) => {
-            const active = isActive(pathname, href)
-            return (
-              <Link key={href + label} href={href} ref={active ? activeLinkRef : undefined} style={{
-                flex: '0 0 auto', minWidth: 68, display: 'flex', flexDirection: 'column', alignItems: 'center',
-                padding: '10px 8px 9px', textDecoration: 'none', gap: 4, scrollSnapAlign: 'start',
-                borderTop: active ? '2px solid #69C9CA' : '2px solid transparent',
-              }}>
-                <span style={{ position: 'relative', display: 'inline-flex' }}>
-                  <Icon size={21} color={active ? '#69C9CA' : '#4B5563'} strokeWidth={active ? 2.5 : 2} />
-                  {href === '/pipeline' && unread > 0 && (
-                    <span style={{
-                      position: 'absolute', top: -5, right: -9, minWidth: 15, height: 15, borderRadius: 999,
-                      background: '#EF4444', color: '#FFF', fontSize: 9, fontWeight: 700,
-                      display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: '0 4px',
-                    }}>{unread > 99 ? '99+' : unread}</span>
-                  )}
-                </span>
-                <span style={{
-                  fontSize: 9.5, fontWeight: 600, letterSpacing: 0.3, textTransform: 'uppercase',
-                  color: active ? '#69C9CA' : '#4B5563', whiteSpace: 'nowrap',
-                }}>{label}</span>
-              </Link>
-            )
-          })}
-        </nav>
       </div>
     </div>
   )

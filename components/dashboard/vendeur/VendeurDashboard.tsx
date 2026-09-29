@@ -189,7 +189,7 @@ export default function VendeurDashboard() {
   const pctPersonalRevenue = personalGoalRevenue > 0 ? Math.min(Math.round((stats.revenusToday / personalGoalRevenue) * 100), 100) : 0
 
   return (
-    <div style={{ height: '100%', overflowY: 'auto', background: '#F1F2F2', fontFamily: 'Inter, sans-serif' }}>
+    <div style={{ height: '100%', overflowY: 'auto', background: '#F1F2F2', fontFamily: 'Inter, sans-serif', paddingBottom: 'env(safe-area-inset-bottom)' }}>
       <style>{`@keyframes mw-spin { to { transform: rotate(360deg) } }`}</style>
 
       {/* Header */}

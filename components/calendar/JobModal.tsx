@@ -1,7 +1,7 @@
 'use client'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
-import { createJob, updateJob, deleteJob, clientName, type Job, type JobInput, type AssignProfile } from '@/lib/queries/calendar'
+import { createJob, updateJob, deleteJob, clientName, jobsHasColumn, type Job, type JobInput, type AssignProfile } from '@/lib/queries/calendar'
 import { searchClients, fullAddress, type Client } from '@/lib/queries/clients'
 import { GAZON_ROUTES, findRoute, routeLabel } from '@/lib/gazon-routes'
 import { autoFocusDesktop } from '@/lib/ui'
@@ -127,6 +127,17 @@ export default function JobModal({ kind, canEdit = true, userId = null, lanes, a
   // mode déduit si l'admin laisse « Auto » (dépend du nb d'assignés → réactif)
   const autoMode: PayMode = autoPayMode(type, serviceValue, assigned.length)
   const effectiveMode: PayMode = (payMode as PayMode) || autoMode
+  const isHourly = PAY_MODE_BY_ID[effectiveMode].kind === 'hourly'
+
+  // jobs.pay_hours absente (migration_crm_job_heures.sql pas appliquée) : saveJob
+  // jetterait le temps saisi sans rien dire → on le dit dans le champ.
+  const [payHoursMissing, setPayHoursMissing] = useState(false)
+  useEffect(() => {
+    if (!isHourly) return
+    let cancelled = false
+    jobsHasColumn('pay_hours').then((ok) => { if (!cancelled) setPayHoursMissing(!ok) })
+    return () => { cancelled = true }
+  }, [isHourly])
 
   // --- journées préparées dans Run fermeture (menu « Journée de fermeture ») ---
   const [fermetureRuns, setFermetureRuns] = useState<string[]>([])
@@ -585,16 +596,22 @@ export default function JobModal({ kind, canEdit = true, userId = null, lanes, a
           {/* Temps de la job — modes horaires (copropriété/commercial, paysagement).
               C'est CE temps qui paye chaque employé assigné à son taux horaire ;
               sans lui, seules les heures pointées comptent. */}
-          {PAY_MODE_BY_ID[effectiveMode].kind === 'hourly' && (
+          {isHourly && (
             <Field label="Temps de la job (h)">
+              {payHoursMissing && !ro && (
+                <div style={{ background: '#FFFBEB', color: '#92400E', border: '1px solid #FCD34D', borderRadius: 8, padding: '8px 10px', fontSize: 12, lineHeight: 1.45, marginBottom: 6 }}>
+                  ⚠️ Pas encore actif : la migration <b>migration_crm_job_heures.sql</b>{' '}n&apos;est pas appliquée dans Supabase — le temps ne peut pas être enregistré.
+                </div>
+              )}
               <div style={{ display: 'flex', gap: 6 }}>
                 <input
                   value={payHours}
                   onChange={(e) => setPayHours(e.target.value)}
                   type="number" step="0.25" min="0" inputMode="decimal" style={inp}
                   placeholder={scheduledHours > 0 ? String(scheduledHours) : '0'}
+                  disabled={payHoursMissing}
                 />
-                {!ro && scheduledHours > 0 && payHours !== String(scheduledHours) && (
+                {!ro && !payHoursMissing && scheduledHours > 0 && payHours !== String(scheduledHours) && (
                   <button
                     type="button"
                     onClick={() => setPayHours(String(scheduledHours))}

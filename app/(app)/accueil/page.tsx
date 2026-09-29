@@ -51,7 +51,7 @@ export default function AccueilPage() {
   })
 
   return (
-    <div style={{ fontFamily: 'Inter, sans-serif', maxWidth: 1100, margin: '0 auto', padding: '12px 16px 84px' }}>
+    <div style={{ fontFamily: 'Inter, sans-serif', maxWidth: 1100, margin: '0 auto', padding: '12px 16px var(--mw-page-pb)' }}>
       {/* En-tête */}
       <div style={{ marginBottom: 24 }}>
         <h1 style={{ fontSize: 24, fontWeight: 700, color: '#111827', margin: 0, letterSpacing: '-0.02em' }}>

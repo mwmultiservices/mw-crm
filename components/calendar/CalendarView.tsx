@@ -114,7 +114,7 @@ export default function CalendarView({ kind }: { kind: 'fenetre' | 'paysagement'
   }
 
   return (
-    <div style={{ fontFamily: 'Inter, sans-serif', padding: '12px 16px 84px' }}>
+    <div style={{ fontFamily: 'Inter, sans-serif', padding: '12px 16px var(--mw-page-pb)' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 16 }}>
         <h1 style={{ fontSize: 22, fontWeight: 700, color: '#111827', margin: 0 }}>
           {canEdit ? cfg.title : `Mon horaire — ${kind === 'fenetre' ? 'Fenêtres' : 'Paysagement'}`}

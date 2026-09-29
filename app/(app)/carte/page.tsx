@@ -262,7 +262,7 @@ export default function CartePage() {
       </div>
 
       {/* ── Bouton Nouvelle porte ─────────────────────────────────────────── */}
-      <div style={{ position: 'absolute', bottom: 20, left: '50%', transform: 'translateX(-50%)', zIndex: 1000 }}>
+      <div style={{ position: 'absolute', bottom: 'calc(20px + env(safe-area-inset-bottom))', left: '50%', transform: 'translateX(-50%)', zIndex: 1000 }}>
         <button
           onClick={() => setShowSearchModal(true)}
           style={{

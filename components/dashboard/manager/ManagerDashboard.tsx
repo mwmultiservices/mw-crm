@@ -454,7 +454,7 @@ export default function ManagerDashboard() {
       </div>
 
       {/* Content */}
-      <div style={{ flex: 1, overflowY: 'auto' }}>
+      <div style={{ flex: 1, overflowY: 'auto', paddingBottom: 'env(safe-area-inset-bottom)' }}>
 
         {/* ─── GLOBAL ─── */}
         {activeTab === 'global' && (

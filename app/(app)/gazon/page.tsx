@@ -1025,7 +1025,7 @@ function ReorderList({ draft, setDraft, grouped, locked, saving, onCancel, onCon
       </div>
 
       <div style={{
-        position: 'sticky', bottom: 0, display: 'flex', gap: 8, marginTop: 14, padding: '10px 0',
+        position: 'sticky', bottom: 0, display: 'flex', gap: 8, marginTop: 14, padding: '10px 0 calc(10px + env(safe-area-inset-bottom))',
         background: 'linear-gradient(to top, #F9FAFB 70%, transparent)',
       }}>
         <button onClick={onCancel} disabled={saving} style={{ ...primaryBtn, background: '#F3F4F6', color: '#374151', flex: 1 }}>Annuler</button>
@@ -1555,7 +1555,7 @@ function TerrainModal({ terrain, secteurs, admin, onClose, onSaved }: {
 // ============================================================
 // UI helpers
 // ============================================================
-const page: React.CSSProperties = { fontFamily: 'Inter, sans-serif', maxWidth: 900, margin: '0 auto', padding: '12px 16px 84px' }
+const page: React.CSSProperties = { fontFamily: 'Inter, sans-serif', maxWidth: 900, margin: '0 auto', padding: '12px 16px var(--mw-page-pb)' }
 
 function Modal({ title, children, onClose, wide }: { title: string; children: React.ReactNode; onClose: () => void; wide?: boolean }) {
   return (

@@ -301,7 +301,7 @@ export default function MapComponent({ doors, onLongPress, onDoorClick, clearTem
       <button
         onClick={recenter}
         style={{
-          position: 'absolute', bottom: 16, left: 12, zIndex: 1000,
+          position: 'absolute', bottom: 'calc(16px + env(safe-area-inset-bottom))', left: 12, zIndex: 1000,
           background: 'white',
           border: '1px solid #E5E7EB',
           borderRadius: '50%',

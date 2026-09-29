@@ -494,7 +494,7 @@ export default function ProfilPage() {
         </div>
 
         {/* Content */}
-        <div style={{ flex: 1, overflowY: 'auto', padding: '16px 16px 40px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+        <div style={{ flex: 1, overflowY: 'auto', padding: '16px 16px calc(40px + env(safe-area-inset-bottom))', display: 'flex', flexDirection: 'column', gap: 14 }}>
           {needsMigration && <MigrationBanner sql={MIGRATION_SQL} />}
           <IdentityCard />
 
@@ -594,7 +594,7 @@ export default function ProfilPage() {
   // ─────────────────────────────────────────────────────────
 
   return (
-    <div style={{ height: '100%', overflowY: 'auto', background: '#F1F2F2', fontFamily: 'Inter, sans-serif' }}>
+    <div style={{ height: '100%', overflowY: 'auto', background: '#F1F2F2', fontFamily: 'Inter, sans-serif', paddingBottom: 'env(safe-area-inset-bottom)' }}>
       {/* Header */}
       <div style={{ background: '#FFFFFF', borderBottom: '1px solid #E5E7EB', padding: '20px 20px 16px' }}>
         <h1 style={{ color: '#111827', fontWeight: 700, fontSize: 22, margin: 0, letterSpacing: '-0.02em' }}>

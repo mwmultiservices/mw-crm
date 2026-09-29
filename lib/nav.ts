@@ -1,10 +1,9 @@
 // Navigation unifiée par rôle (admin | lead | rep | tech | terrain)
-// Sidebar desktop = NAV_BY_ROLE (sections). Bottom-nav mobile = mobileNavForRole()
-// (aplatit NAV_BY_ROLE, dédupliqué par href) — même source, même ordre que le desktop,
-// le bottom-nav défile horizontalement s'il y a plus d'items que l'écran n'en affiche.
+// NAV_BY_ROLE (sections) alimente À LA FOIS la sidebar du bureau et le menu ☰
+// du téléphone/de la tablette (app/(app)/layout.tsx) — même source, même ordre.
 import {
   Home, Map, BarChart2, KanbanSquare, CalendarDays,
-  Users, FileText, Wallet, Clock, Database, User, Sprout, Leaf,
+  Users, FileText, Wallet, Clock, User, Sprout, Leaf,
 } from 'lucide-react'
 
 type IconType = React.ComponentType<{ size?: number; color?: string; strokeWidth?: number }>
@@ -26,7 +25,6 @@ const I = {
   dashboard:  { href: '/dashboard',               label: 'Performance',  Icon: BarChart2 as IconType },
   pipeline:   { href: '/pipeline',                label: 'Pipeline',     Icon: KanbanSquare as IconType },
   clients:    { href: '/clients',                 label: 'Clients',      Icon: Users as IconType },
-  baseD2D:    { href: '/base-de-donnees',         label: 'Base D2D',     Icon: Database as IconType },
   calFen:     { href: '/calendrier/fenetres',     label: 'Fenêtres',     Icon: CalendarDays as IconType },
   calPays:    { href: '/calendrier/paysagement',  label: 'Paysagement',  Icon: CalendarDays as IconType },
   // vue employé : le calendrier n'est que SON horaire (cf. CalendarView / groupByTeam)
@@ -44,7 +42,9 @@ const I = {
 export const NAV_BY_ROLE: Record<string, NavSection[]> = {
   admin: [
     { title: 'Tableau de bord', items: [I.accueil, I.carte, I.dashboard] },
-    { title: 'Ventes',          items: [I.pipeline, I.clients, I.baseD2D] },
+    // « Base D2D » retirée (demande client 2026-09-28) : on cherche un nom
+    // directement dans le Pipeline (barre de recherche en haut).
+    { title: 'Ventes',          items: [I.pipeline, I.clients] },
     { title: 'Planification',   items: [I.calFen, I.calPays, I.gazon, I.fermeture] },
     { title: 'Finance',         items: [I.soumissions, I.payes] },
     { title: 'Compte',          items: [I.profil] },
@@ -83,23 +83,6 @@ export const NAV_BY_ROLE: Record<string, NavSection[]> = {
 export const TERRAIN_EXTRA: NavSection = {
   title: 'Paysagement',
   items: [I.pointage, I.horairePays],
-}
-
-// Items du bottom-nav mobile pour un rôle : tout ce que ce rôle voit dans la
-// sidebar desktop (secondary_role inclus), aplatis et dédupliqués par href.
-// Pas de plafond à 5 — le bottom-nav défile horizontalement au besoin (cf. .mw-bottomnav).
-export function mobileNavForRole(role: string, secondaryRole?: string | null): NavItem[] {
-  const sections = navForRole(role, secondaryRole)
-  const seen = new Set<string>()
-  const items: NavItem[] = []
-  for (const section of sections) {
-    for (const item of section.items) {
-      if (seen.has(item.href)) continue
-      seen.add(item.href)
-      items.push(item)
-    }
-  }
-  return items
 }
 
 // Page d'atterrissage par défaut selon le rôle

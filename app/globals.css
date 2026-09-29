@@ -54,7 +54,7 @@ html, body {
   font-family: 'Inter', sans-serif;
 }
 
-/* Fond du CANEVAS — corrige le liseré BLANC sous le bottom-nav (iPhone/iPad).
+/* Fond du CANEVAS — corrige le liseré BLANC en bas de l'écran (iPhone/iPad).
    Tout ce que le shell ne couvre pas (zone de l'indicateur d'accueil, barre
    d'outils repliée de Safari, écart viewport visuel / viewport de mise en page)
    est peint par le canevas. Sans couleur ici il est BLANC par défaut.
@@ -62,8 +62,13 @@ html, body {
    Tailwind v4 avec les directives v3 (`@tailwind base/components/utilities`),
    donc AUCUNE classe utilitaire n'est générée — vérifié en compilant ce
    fichier. Toutes les pages peignent leur propre fond (foncé), on met donc la
-   même valeur que le bottom-nav pour que le liseré se fonde dedans. */
+   même valeur que l'en-tête pour que le liseré se fonde dedans. */
 html { background: #000; }
+
+/* Marge du bas des pages qui défilent. Téléphone/tablette : plus de bottom-nav
+   ni de bouton flottant → juste de quoi dégager l'indicateur d'accueil. Bureau :
+   de quoi dégager le bouton Rafraîchir flottant (cf. media query plus bas). */
+:root { --mw-page-pb: calc(28px + env(safe-area-inset-bottom)); }
 body { -webkit-font-smoothing: antialiased; }
 
 /* ───────── Verrou du document (posé par app/(app)/layout.tsx uniquement) ─────────
@@ -87,15 +92,19 @@ body.mw-app-locked {
   width: auto;
 }
 
-/* ───────── Shell applicatif (sidebar desktop + bottom-nav mobile) ───────── */
+/* ───────── Shell applicatif ─────────
+   Bureau (souris + ≥1024 px) : sidebar fixe à gauche.
+   Téléphone ET tablette (iPad, toutes orientations) : en-tête avec ☰ qui ouvre
+   le menu latéral .mw-navdrawer. Plus de bottom-nav : le contenu descend
+   jusqu'au bas de l'écran (l'indicateur d'accueil iOS passe par-dessus). */
 .mw-shell {
   display: flex;
   height: 100vh;
-  height: 100dvh; /* évite le "saut" du bottom-nav quand la barre d'adresse mobile se replie */
+  height: 100dvh; /* suit la barre d'adresse mobile qui se replie */
   background: var(--mw-gray-bg);
 }
-/* body verrouillé = déjà exactement la zone visible → on s'y colle (évite qu'un
-   écart vh/dvh pousse le bottom-nav hors de l'écran). */
+/* body verrouillé = déjà exactement la zone visible → on s'y colle (évite un
+   écart vh/dvh). */
 body.mw-app-locked .mw-shell { height: 100%; }
 .mw-main {
   flex: 1;
@@ -106,7 +115,7 @@ body.mw-app-locked .mw-shell { height: 100%; }
 }
 .mw-content {
   flex: 1;
-  min-height: 0; /* sans ça un enfant trop grand pousse le bottom-nav hors de l'écran */
+  min-height: 0; /* sans ça un enfant trop grand déborde de l'écran au lieu de défiler */
   overflow: auto;
   -webkit-overflow-scrolling: touch;
   overscroll-behavior: contain; /* pas de chaînage vers le document (rubber-band) */
@@ -114,28 +123,9 @@ body.mw-app-locked .mw-shell { height: 100%; }
   padding-right: env(safe-area-inset-right);
 }
 
-/* Sidebar — cachée en mobile */
+/* Sidebar — bureau seulement */
 .mw-sidebar { display: none; }
 
-/* Bottom-nav — visible en mobile. Défile horizontalement quand un rôle a plus
-   d'items que l'écran n'en affiche (ex. admin/lead) au lieu de les tronquer. */
-.mw-bottomnav {
-  display: flex;
-  /* PAS de justify-content:center — combiné à overflow-x:auto, ça rend le début
-     du contenu inatteignable au scroll dans certains navigateurs (bug connu). */
-  background: #000;
-  border-top: 1px solid rgba(255,255,255,0.08);
-  padding-bottom: max(10px, env(safe-area-inset-bottom));
-  padding-left: env(safe-area-inset-left);
-  padding-right: env(safe-area-inset-right);
-  flex-shrink: 0;
-  overflow-x: auto;
-  overflow-y: hidden;
-  -webkit-overflow-scrolling: touch;
-  scroll-snap-type: x proximity;
-  scrollbar-width: none; /* Firefox */
-}
-.mw-bottomnav::-webkit-scrollbar { display: none; } /* Chrome/Safari */
 .mw-header-mobile {
   display: flex;
   flex-shrink: 0;
@@ -145,7 +135,54 @@ body.mw-app-locked .mw-shell { height: 100%; }
   background: #000;
 }
 
-@media (min-width: 1024px) {
+/* Menu ☰ : panneau qui glisse depuis la gauche, par-dessus le contenu
+   (sous les modals, z-index 60). Réserve lui-même les encoches. */
+.mw-navdrawer-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 55;
+  background: rgba(0, 0, 0, 0.5);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 200ms ease;
+}
+.mw-navdrawer-overlay.open { opacity: 1; pointer-events: auto; }
+.mw-navdrawer {
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 56;
+  width: min(280px, 84vw);
+  display: flex;
+  flex-direction: column;
+  background: #000;
+  color: #fff;
+  box-shadow: 4px 0 24px rgba(0, 0, 0, 0.35);
+  padding-top: env(safe-area-inset-top);
+  padding-bottom: env(safe-area-inset-bottom);
+  padding-left: env(safe-area-inset-left);
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  transform: translateX(-100%);
+  visibility: hidden; /* fermé = hors de l'ordre de tabulation */
+  transition: transform 220ms ease, visibility 0s linear 220ms;
+}
+.mw-navdrawer.open {
+  transform: none;
+  visibility: visible;
+  transition: transform 220ms ease, visibility 0s;
+}
+
+/* Bouton Rafraîchir flottant : bureau seulement (dans l'en-tête ailleurs) */
+.mw-refresh { display: none; bottom: calc(20px + env(safe-area-inset-bottom)); }
+
+/* Bureau = écran large AVEC souris/trackpad. Un iPad (même ≥1024 px en
+   paysage) répond pointer:coarse → il garde l'en-tête + ☰, qui libère la
+   largeur de la sidebar et respecte la barre d'état. */
+@media (min-width: 1024px) and (hover: hover) and (pointer: fine) {
+  :root { --mw-page-pb: 84px; }
   .mw-sidebar {
     display: flex;
     flex-direction: column;
@@ -155,13 +192,16 @@ body.mw-app-locked .mw-shell { height: 100%; }
     color: #fff;
     border-right: 1px solid rgba(255,255,255,0.08);
     overflow-y: auto;
+    padding-top: env(safe-area-inset-top);
   }
-  .mw-bottomnav { display: none; }
-  .mw-header-mobile { display: none; }
+  .mw-header-mobile,
+  .mw-navdrawer,
+  .mw-navdrawer-overlay { display: none; }
+  .mw-refresh { display: flex; }
 }
 
 /* ───────── Modals / bottom-sheets / drawers ─────────
-   Un modal couvre TOUT l'écran (il passe par-dessus le header et le bottom-nav),
+   Un modal couvre TOUT l'écran (il passe par-dessus l'en-tête et le menu),
    donc c'est lui qui doit réserver les encoches : sans ces paddings, le titre part
    sous la barre d'état et les boutons Annuler/Créer sous l'indicateur d'accueil.
    La carte est bornée à 100% de la zone SÛRE (pas 90vh) et défile à l'intérieur. */
@@ -232,9 +272,13 @@ body.mw-app-locked .mw-shell { height: 100%; }
   font-family: 'Inter', sans-serif;
 }
 /* Feuilles ancrées dans un conteneur (carte D2D) : position:absolute, pas fixed.
-   Le conteneur est déjà entre le header et le bottom-nav → pas d'encoche à réserver. */
+   Le conteneur commence sous l'en-tête (pas d'encoche en haut) mais descend
+   jusqu'au bas de l'écran → la carte garde le padding de l'indicateur d'accueil. */
 .mw-sheet-overlay-abs { position: absolute; z-index: 9999; padding-top: 12px; }
-.mw-sheet-overlay-abs > .mw-sheet-card { padding-bottom: 0; }
+
+/* Contrôles Leaflet du bas (zoom, attribution) : la carte D2D descend jusqu'au
+   bas de l'écran → on les garde au-dessus de l'indicateur d'accueil. */
+.mw-content .leaflet-bottom { bottom: env(safe-area-inset-bottom); }
 
 /* Drawer latéral pleine hauteur (fiche client, lead) */
 .mw-drawer {
@@ -252,12 +296,6 @@ body.mw-app-locked .mw-shell { height: 100%; }
   padding-right: env(safe-area-inset-right);
   overscroll-behavior: contain;
   font-family: 'Inter', sans-serif;
-}
-
-/* Bouton flottant « Rafraîchir » — au-dessus du bottom-nav en mobile */
-.mw-refresh { bottom: calc(78px + env(safe-area-inset-bottom)); }
-@media (min-width: 1024px) {
-  .mw-refresh { bottom: calc(20px + env(safe-area-inset-bottom)); }
 }
 
 @keyframes mw-spin { to { transform: rotate(360deg); } }
