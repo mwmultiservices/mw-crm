@@ -4,7 +4,7 @@ import { findRoute } from '@/lib/gazon-routes'
 
 // ============================================================
 // Requêtes Calendrier (Phase 4) — table jobs (rendez-vous / créneaux).
-// type : fenetre | gazon | projet · team : equipe1 | equipe2
+// type : fenetre | gazon | projet | fermeture · team : equipe1 | equipe2
 // ============================================================
 
 export interface Job {
@@ -82,6 +82,7 @@ export async function getMyJobsForDay(profileId: string, dayISO: string): Promis
 export function jobLabel(job: Job): string {
   const route = job.type === 'gazon' ? findRoute(job.route_name) : null
   if (route) return `🌿 ${route.label}`
+  if (job.type === 'fermeture' && job.route_name) return `🍂 Fermeture ${job.route_name}`
   const base = clientName(job) || job.title || job.service || 'Job'
   return job.service && base !== job.service ? `${base} — ${job.service}` : base
 }

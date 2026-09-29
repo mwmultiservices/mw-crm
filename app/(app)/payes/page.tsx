@@ -336,7 +336,7 @@ function JobsDetail({ jobs, rates, upsellByJob }: { jobs: DoneJobRow[]; rates?: 
               {j.start_at ? new Date(j.start_at).toLocaleDateString('fr-CA', { weekday: 'short', day: 'numeric', month: 'short' }) : '—'}
             </span>
             <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-              {j.type === 'fenetre' ? '🪟' : j.type === 'gazon' ? '🌿' : '🔨'} {j.title || j.service || 'Job'}
+              {j.type === 'fenetre' ? '🪟' : j.type === 'gazon' ? '🌿' : j.type === 'fermeture' ? '🍂' : '🔨'} {j.title || j.service || 'Job'}
             </span>
             <span style={{ fontSize: 10, fontWeight: 700, color: '#6B7280', textTransform: 'uppercase', letterSpacing: '0.04em', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
               {meta?.short ?? '—'}{percent ? ` ${r[meta.rate]}%` : hours > 0 ? ` ${hours} h` : ''}

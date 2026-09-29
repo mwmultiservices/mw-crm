@@ -9,7 +9,8 @@ import WeekCalendar, { type Lane, type ProfileMini } from './WeekCalendar'
 import JobModal from './JobModal'
 import { ChevronLeft, ChevronRight, Plus } from 'lucide-react'
 
-const LANES: Lane[] = [
+// exporté : la Run fermeture planifie ses journées avec le même JobModal
+export const LANES: Lane[] = [
   { id: 'equipe1', label: 'Équipe 1', color: '#69C9CA' },
   { id: 'equipe2', label: 'Équipe 2', color: '#697035' },
 ]
@@ -18,7 +19,7 @@ const SOLO_LANE: Lane[] = [{ id: 'mine', label: 'Mon horaire', color: '#69C9CA' 
 
 const CONFIG = {
   fenetre: { title: 'Calendrier — Fenêtres', types: ['fenetre'], assignRoles: ['tech'] },
-  paysagement: { title: 'Calendrier — Paysagement', types: ['gazon', 'projet'], assignRoles: ['terrain', 'rep'] },
+  paysagement: { title: 'Calendrier — Paysagement', types: ['gazon', 'fermeture', 'projet'], assignRoles: ['terrain', 'rep'] },
 } as const
 
 export default function CalendarView({ kind }: { kind: 'fenetre' | 'paysagement' }) {

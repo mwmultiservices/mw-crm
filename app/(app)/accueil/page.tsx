@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabase'
 import { getAccueilData, type AccueilData } from '@/lib/queries/accueil'
 import { STAGE_IDS, stageLabel } from '@/lib/pipeline'
+import { FERMETURE_COLOR } from '@/lib/fermeture'
 import StatCard from '@/components/dashboard/shared/StatCard'
 import {
   AppWindow, Trees, Hammer, DollarSign, Inbox, CalendarDays, FileText, Clock,
@@ -16,8 +17,8 @@ import {
 const money = (n: number) =>
   new Intl.NumberFormat('fr-CA', { style: 'currency', currency: 'CAD', maximumFractionDigits: 0 }).format(n)
 
-const TYPE_LABELS: Record<string, string> = { fenetre: 'Fenêtres', gazon: 'Gazon', projet: 'Projet' }
-const TYPE_COLORS: Record<string, string> = { fenetre: '#69C9CA', gazon: '#697035', projet: '#8D5D36' }
+const TYPE_LABELS: Record<string, string> = { fenetre: 'Fenêtres', gazon: 'Gazon', fermeture: 'Fermeture', projet: 'Projet' }
+const TYPE_COLORS: Record<string, string> = { fenetre: '#69C9CA', gazon: '#697035', fermeture: FERMETURE_COLOR, projet: '#8D5D36' }
 
 function timeOf(iso: string | null): string {
   if (!iso) return '—'

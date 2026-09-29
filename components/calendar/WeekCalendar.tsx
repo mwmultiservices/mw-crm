@@ -6,6 +6,7 @@ import { clientName, jobDirectionsUrl, type Job } from '@/lib/queries/calendar'
 import { serviceShortLabel } from '@/lib/services'
 import { jobStatusMeta } from '@/lib/job-status'
 import { findRoute } from '@/lib/gazon-routes'
+import { FERMETURE_COLOR } from '@/lib/fermeture'
 
 export interface Lane { id: string; label: string; color: string }
 export interface ProfileMini { full_name: string | null; color: string | null }
@@ -282,6 +283,8 @@ export default function WeekCalendar({
                   const canceled = st.id === 'canceled'
                   const gpsUrl = jobDirectionsUrl(job)
                   const route = job.type === 'gazon' ? findRoute(job.route_name) : null
+                  // journée de la Run fermeture (« Longueuil #2 »)
+                  const run = job.type === 'fermeture' && job.route_name ? job.route_name : null
                   const compact = height < 56
                   return (
                     <div
@@ -299,7 +302,7 @@ export default function WeekCalendar({
                         dragRef.current = { grabMin, durMin }
                       } : undefined}
                       onDragEnd={dnd ? () => { setDragOver(null); dragRef.current = null } : undefined}
-                      title={`${fmtTime(job.start_at)}${job.end_at ? `–${fmtTime(job.end_at)}` : ''} · ${route ? route.label : (clientName(job) || job.title || job.service || 'Job')}`}
+                      title={`${fmtTime(job.start_at)}${job.end_at ? `–${fmtTime(job.end_at)}` : ''} · ${route ? route.label : run ? `Fermeture ${run}` : (clientName(job) || job.title || job.service || 'Job')}`}
                       style={{
                         position: 'absolute', top, height,
                         left: `calc(${leftPct}% + 2px)`, width: `calc(${widthPct}% - 4px)`,
@@ -329,6 +332,16 @@ export default function WeekCalendar({
                           >
                             <Play size={11} />
                           </Link>
+                        ) : run ? (
+                          <Link
+                            href={`/fermeture?run=${encodeURIComponent(run)}`}
+                            onClick={(e) => e.stopPropagation()}
+                            title="Démarrer la journée"
+                            aria-label="Démarrer la journée"
+                            style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 18, height: 18, borderRadius: 5, color: '#FFF', background: FERMETURE_COLOR, flexShrink: 0 }}
+                          >
+                            <Play size={11} />
+                          </Link>
                         ) : gpsUrl && (
                           <a
                             href={gpsUrl}
@@ -344,9 +357,9 @@ export default function WeekCalendar({
                         )}
                       </div>
                       <div style={{ fontSize: 12, fontWeight: 600, color: '#111827', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                        {route ? `🌿 ${route.label}` : (clientName(job) || job.title || job.service || 'Job')}
+                        {route ? `🌿 ${route.label}` : run ? `🍂 ${run}` : (clientName(job) || job.title || job.service || 'Job')}
                       </div>
-                      {!compact && !route && job.route_name && <div style={{ fontSize: 10, color: '#697035' }}>🌿 {job.route_name}</div>}
+                      {!compact && !route && !run && job.route_name && <div style={{ fontSize: 10, color: '#697035' }}>🌿 {job.route_name}</div>}
                       {/* libellé court : « Lavage de vitres intérieur / extérieur » ne rentre pas dans 116 px */}
                       {!compact && job.service && (clientName(job) || job.title) && (
                         <div style={{ fontSize: 10, color: '#6B7280', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{serviceShortLabel(job.service)}</div>

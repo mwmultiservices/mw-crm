@@ -8,6 +8,8 @@ import { autoFocusDesktop } from '@/lib/ui'
 import { PAY_MODES, PAY_MODE_BY_ID, autoPayMode, type PayMode } from '@/lib/payes'
 import { serviceCatalogFor, servicesFromValue, freeServiceText, joinServiceValue } from '@/lib/services'
 import { getQuotesForClient, getQuote, STATUS_BY_ID, type Quote } from '@/lib/queries/soumissions'
+import { getFermetureRunLabels } from '@/lib/queries/fermeture'
+import { FERMETURE_COLOR } from '@/lib/fermeture'
 import { JOB_STATUSES, jobStatusMeta, normalizeJobStatus } from '@/lib/job-status'
 import type { Lane, ProfileMini } from './WeekCalendar'
 import JobExtras from './JobExtras'
@@ -30,6 +32,9 @@ interface Props {
   initialDate?: string // YYYY-MM-DD
   initialStart?: string // HH:MM (créneau cliqué dans la grille)
   initialTeam?: string
+  initialEnd?: string   // HH:MM — défaut : début + 2 h
+  initialType?: string  // ex. 'fermeture' (bouton « Planifier » de la Run fermeture)
+  initialRoute?: string // route/journée pré-choisie (« Longueuil #2 »)
   // édition
   job?: Job | null
   onClose: () => void
@@ -46,7 +51,7 @@ function timeInput(iso: string | null): string {
   const d = new Date(iso)
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
 }
-const TYPE_OPTIONS = [{ id: 'gazon', l: '🌿 Gazon (route)' }, { id: 'projet', l: '🔨 Projet' }]
+const TYPE_OPTIONS = [{ id: 'gazon', l: '🌿 Gazon' }, { id: 'fermeture', l: '🍂 Fermeture' }, { id: 'projet', l: '🔨 Projet' }]
 const TYPE_LABELS: Record<string, string> = Object.fromEntries(TYPE_OPTIONS.map((t) => [t.id, t.l]))
 
 /** « 14:30 » + 2 h → « 16:30 » (borné à 23:59) */
@@ -60,11 +65,11 @@ function buildISO(date: string, time: string): string | null {
   return new Date(`${date}T${time}`).toISOString()
 }
 
-export default function JobModal({ kind, canEdit = true, userId = null, lanes, assignProfiles, profileMap = {}, initialDate, initialStart, initialTeam, job, onClose, onSaved }: Props) {
+export default function JobModal({ kind, canEdit = true, userId = null, lanes, assignProfiles, profileMap = {}, initialDate, initialStart, initialTeam, initialEnd, initialType, initialRoute, job, onClose, onSaved }: Props) {
   const isEdit = !!job
   const ro = !canEdit // lecture seule (employés non-admin)
 
-  const [type, setType] = useState(job?.type ?? (kind === 'fenetre' ? 'fenetre' : 'gazon'))
+  const [type, setType] = useState(job?.type ?? initialType ?? (kind === 'fenetre' ? 'fenetre' : 'gazon'))
   // catalogue du menu déroulant Service : vitres (fenêtres) ou projets (paysagement).
   // Réactif : basculer gazon → projet change la liste (et vide la sélection).
   const catalog = useMemo(() => serviceCatalogFor(type), [type])
@@ -83,14 +88,19 @@ export default function JobModal({ kind, canEdit = true, userId = null, lanes, a
   )
   // total des upsells enregistrés sur cette job (remonté par <JobUpsells>)
   const [upsellTotal, setUpsellTotal] = useState(0)
-  // route de gazon : on stocke l'id de la route (tolère les anciennes valeurs texte libre)
-  const [routeName, setRouteName] = useState(findRoute(job?.route_name)?.id ?? '')
+  // route de gazon : on stocke l'id de la route (tolère les anciennes valeurs texte libre).
+  // Fermeture : le libellé de la journée tel quel (« Longueuil #2 »).
+  const [routeName, setRouteName] = useState(
+    job
+      ? (job.type === 'fermeture' ? (job.route_name ?? '') : (findRoute(job.route_name)?.id ?? ''))
+      : (initialRoute ?? ''),
+  )
   const [address, setAddress] = useState(job?.address ?? '')
   const [clientPhone, setClientPhone] = useState(job?.client_phone ?? '')
   const [clientEmail, setClientEmail] = useState(job?.client_email ?? '')
   const [date, setDate] = useState(job ? dateInput(job.start_at) : (initialDate ?? ''))
   const [start, setStart] = useState(job ? timeInput(job.start_at) : (initialStart || '08:00'))
-  const [end, setEnd] = useState(job ? timeInput(job.end_at) : plusHours(initialStart || '08:00', 2))
+  const [end, setEnd] = useState(job ? timeInput(job.end_at) : (initialEnd || plusHours(initialStart || '08:00', 2)))
   const [team, setTeam] = useState(job?.team ?? initialTeam ?? lanes[0]?.id ?? 'equipe1')
   const [assigned, setAssigned] = useState<string[]>(job?.assigned_ids ?? [])
   const [price, setPrice] = useState(job?.price != null ? String(job.price) : '')
@@ -107,12 +117,30 @@ export default function JobModal({ kind, canEdit = true, userId = null, lanes, a
   const [error, setError] = useState('')
 
   const isGazon = kind === 'paysagement' && type === 'gazon'
+  const isFermeture = kind === 'paysagement' && type === 'fermeture'
+  // gazon ET fermeture = une run de plusieurs clients : ni client, ni adresse,
+  // ni prix, ni vendeur — juste la route (ou la journée) à suivre.
+  const isRun = isGazon || isFermeture
   // Valeur réellement stockée dans jobs.service : les services cochés joints
   // par « + », plus l'éventuel service libre.
   const serviceValue = joinServiceValue(servicePicks, serviceFree ? serviceOther : '')
   // mode déduit si l'admin laisse « Auto » (dépend du nb d'assignés → réactif)
   const autoMode: PayMode = autoPayMode(type, serviceValue, assigned.length)
   const effectiveMode: PayMode = (payMode as PayMode) || autoMode
+
+  // --- journées préparées dans Run fermeture (menu « Journée de fermeture ») ---
+  const [fermetureRuns, setFermetureRuns] = useState<string[]>([])
+  useEffect(() => {
+    if (!isFermeture) return
+    let cancelled = false
+    getFermetureRunLabels().then((list) => { if (!cancelled) setFermetureRuns(list) })
+    return () => { cancelled = true }
+  }, [isFermeture])
+  // la journée déjà choisie reste proposée, même vidée de ses clients depuis
+  const runOptions = useMemo(
+    () => (routeName && !fermetureRuns.includes(routeName) ? [routeName, ...fermetureRuns] : fermetureRuns),
+    [routeName, fermetureRuns],
+  )
 
   // --- autocomplétion client (fenêtres + projets) : taper un nom existant
   // remplit adresse / téléphone / courriel et rattache le job au client.
@@ -162,7 +190,7 @@ export default function JobModal({ kind, canEdit = true, userId = null, lanes, a
   }, [profileMap, assignProfiles])
 
   useEffect(() => {
-    if (isGazon) return
+    if (isRun) return
     if (skipSearch.current) { skipSearch.current = false; return }
     const term = title.trim()
     if (term.length < 2) { setSuggestions([]); return }
@@ -172,7 +200,7 @@ export default function JobModal({ kind, canEdit = true, userId = null, lanes, a
       if (!cancelled) { setSuggestions(list); setShowSug(true) }
     }, 200)
     return () => { cancelled = true; clearTimeout(t) }
-  }, [title, isGazon])
+  }, [title, isRun])
 
   const pickClient = (c: Client) => {
     skipSearch.current = true
@@ -213,29 +241,31 @@ export default function JobModal({ kind, canEdit = true, userId = null, lanes, a
     setAssigned((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]))
 
   const save = async () => {
-    // gazon = une route à suivre : ni client, ni adresse, ni prix — juste la route
-    if (isGazon && !routeName) { setError('Route requise.'); return }
+    // gazon / fermeture = une route à suivre : ni client, ni adresse, ni prix — juste la route
+    if (isRun && !routeName) { setError(isFermeture ? 'Journée requise.' : 'Route requise.'); return }
     // un slot dispo n'a pas encore de client — titre optionnel
-    if (!isGazon && !title.trim() && status !== 'dispo') { setError(kind === 'fenetre' ? 'Nom du client / job requis.' : 'Nom du job requis.'); return }
+    if (!isRun && !title.trim() && status !== 'dispo') { setError(kind === 'fenetre' ? 'Nom du client / job requis.' : 'Nom du job requis.'); return }
     if (!date) { setError('Date requise.'); return }
     setSaving(true); setError('')
     const payload: JobInput = {
-      title: isGazon ? routeLabel(routeName) : (title.trim() || (status === 'dispo' ? 'Dispo' : null)),
-      service: isGazon ? null : (serviceValue || null),
+      title: isGazon ? routeLabel(routeName)
+        : isFermeture ? `Fermeture ${routeName}`
+        : (title.trim() || (status === 'dispo' ? 'Dispo' : null)),
+      service: isRun ? null : (serviceValue || null),
       type,
       team,
       assigned_ids: assigned,
-      route_name: isGazon ? routeName : null,
-      address: isGazon ? null : (address.trim() || null),
+      route_name: isRun ? routeName : null,
+      address: isRun ? null : (address.trim() || null),
       start_at: buildISO(date, start),
       end_at: buildISO(date, end),
       status,
-      price: isGazon ? null : (price ? Number(price) : null),
+      price: isRun ? null : (price ? Number(price) : null),
       notes: notes || null,
-      client_id: isGazon ? null : clientId,
+      client_id: isRun ? null : clientId,
     }
     // colonnes récentes : omises si vides pour tolérer une migration pas encore appliquée
-    if (!isGazon && (clientPhone.trim() || clientEmail.trim() || job?.client_phone != null || job?.client_email != null)) {
+    if (!isRun && (clientPhone.trim() || clientEmail.trim() || job?.client_phone != null || job?.client_email != null)) {
       payload.client_phone = clientPhone.trim() || null
       payload.client_email = clientEmail.trim() || null
     }
@@ -245,7 +275,7 @@ export default function JobModal({ kind, canEdit = true, userId = null, lanes, a
     if (payHours.trim() || job?.pay_hours != null) payload.pay_hours = payHours.trim() ? Number(payHours) : null
     if (canLinkQuote && (quoteId || job?.quote_id != null)) payload.quote_id = quoteId || null
     // jobs.sold_by : colonne récente (migration_crm_job_vendeur) — omise si vide
-    if (!isGazon && (soldBy || job?.sold_by != null)) payload.sold_by = soldBy || null
+    if (!isRun && (soldBy || job?.sold_by != null)) payload.sold_by = soldBy || null
     const { error: e } = isEdit ? await updateJob(job!.id, payload) : await createJob(payload)
     setSaving(false)
     if (e) { setError(e); return }
@@ -273,11 +303,14 @@ export default function JobModal({ kind, canEdit = true, userId = null, lanes, a
           </div>
         )}
 
-        {/* gazon : ouvre la run filtrée sur CETTE route (l'employé ne voit que la sienne) */}
-        {isEdit && isGazon && routeName && (
-          <Link href={`/gazon?route=${encodeURIComponent(routeName)}`} style={{
+        {/* gazon / fermeture : ouvre la run filtrée sur CETTE route ou journée
+            (l'employé ne voit que la sienne) */}
+        {isEdit && isRun && routeName && (
+          <Link href={isGazon
+            ? `/gazon?route=${encodeURIComponent(routeName)}`
+            : `/fermeture?run=${encodeURIComponent(routeName)}`} style={{
             display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, marginBottom: 14,
-            padding: '12px 14px', borderRadius: 10, background: '#697035', color: '#FFF',
+            padding: '12px 14px', borderRadius: 10, background: isGazon ? '#697035' : FERMETURE_COLOR, color: '#FFF',
             fontSize: 15, fontWeight: 800, textDecoration: 'none',
           }}>
             <Play size={17} />Démarrer la job
@@ -301,6 +334,8 @@ export default function JobModal({ kind, canEdit = true, userId = null, lanes, a
                       setType(t.id)
                       // les catalogues diffèrent : on repart d'une sélection vide
                       setServicePicks([]); setServiceOther(''); setServiceFree(false)
+                      // une route de gazon n'est pas une journée de fermeture
+                      setRouteName('')
                     }} style={{
                       flex: 1, padding: '8px 0', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer',
                       border: type === t.id ? '2px solid #697035' : '1px solid #D1D5DB',
@@ -321,6 +356,19 @@ export default function JobModal({ kind, canEdit = true, userId = null, lanes, a
                 <option value="">— Choisir une route —</option>
                 {GAZON_ROUTES.map((r) => <option key={r.id} value={r.id}>{r.label}</option>)}
               </select>
+            </Field>
+          ) : isFermeture ? (
+            /* fermeture = une journée préparée dans Run fermeture (« Longueuil #2 ») */
+            <Field label="Journée de fermeture *">
+              <select value={routeName} onChange={(e) => setRouteName(e.target.value)} style={inp}>
+                <option value="">— Choisir une journée —</option>
+                {runOptions.map((r) => <option key={r} value={r}>{r}</option>)}
+              </select>
+              {runOptions.length === 0 && (
+                <p style={{ margin: '5px 2px 0', fontSize: 11, color: '#9CA3AF', lineHeight: 1.45 }}>
+                  Aucune journée préparée : divise d&apos;abord les villes en journées dans Run fermeture.
+                </p>
+              )}
             </Field>
           ) : (
             <>
@@ -502,10 +550,10 @@ export default function JobModal({ kind, canEdit = true, userId = null, lanes, a
           <div style={{ display: 'flex', gap: 10 }}>
             <Field label="Début" flex><input type="time" value={start} onChange={(e) => setStart(e.target.value)} style={inp} /></Field>
             <Field label="Fin" flex><input type="time" value={end} onChange={(e) => setEnd(e.target.value)} style={inp} /></Field>
-            {!isGazon && <Field label="Prix ($)" flex><input value={price} onChange={(e) => setPrice(e.target.value)} type="number" inputMode="decimal" style={inp} /></Field>}
+            {!isRun && <Field label="Prix ($)" flex><input value={price} onChange={(e) => setPrice(e.target.value)} type="number" inputMode="decimal" style={inp} /></Field>}
           </div>
 
-          {!isGazon && (
+          {!isRun && (
             <Field label="Mode de paye">
               {/* trois choix au quotidien : commission (défaut), copro/commercial
                   à l'heure, paysagement à l'heure. Le détail de la commission
@@ -565,7 +613,7 @@ export default function JobModal({ kind, canEdit = true, userId = null, lanes, a
             </Field>
           )}
 
-          {!isGazon && (
+          {!isRun && (
             <Field label="Vendeur (closer)">
               <select value={soldBy} onChange={(e) => setSoldBy(e.target.value)} style={inp}>
                 <option value="">— Aucun —</option>
@@ -636,10 +684,10 @@ export default function JobModal({ kind, canEdit = true, userId = null, lanes, a
 
         {/* upsells + paye + photos/dépenses : hors fieldset — les employés y ont
             accès même en lecture seule (ils vendent et saisissent sur le chantier) */}
-        {isEdit && !isGazon && (
+        {isEdit && !isRun && (
           <JobUpsells jobId={job!.id} userId={userId} isAdmin={canEdit} onTotalChange={setUpsellTotal} />
         )}
-        {isEdit && !isGazon && (
+        {isEdit && !isRun && (
           <JobPayPanel
             job={{
               type, service: serviceValue, price: price ? Number(price) : null,
@@ -652,7 +700,7 @@ export default function JobModal({ kind, canEdit = true, userId = null, lanes, a
             isAdmin={canEdit}
           />
         )}
-        {isEdit && <JobExtras jobId={job!.id} userId={userId} isAdmin={canEdit} showPhotos={!isGazon} />}
+        {isEdit && <JobExtras jobId={job!.id} userId={userId} isAdmin={canEdit} showPhotos={!isRun} />}
 
         <div className="mw-modal-actions">
           {ro ? (

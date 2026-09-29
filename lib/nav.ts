@@ -4,7 +4,7 @@
 // le bottom-nav défile horizontalement s'il y a plus d'items que l'écran n'en affiche.
 import {
   Home, Map, BarChart2, KanbanSquare, CalendarDays,
-  Users, FileText, Wallet, Clock, Database, User, Sprout,
+  Users, FileText, Wallet, Clock, Database, User, Sprout, Leaf,
 } from 'lucide-react'
 
 type IconType = React.ComponentType<{ size?: number; color?: string; strokeWidth?: number }>
@@ -33,6 +33,7 @@ const I = {
   horaireFen: { href: '/calendrier/fenetres',     label: 'Horaire',      Icon: CalendarDays as IconType },
   horairePays:{ href: '/calendrier/paysagement',  label: 'Horaire',      Icon: CalendarDays as IconType },
   gazon:      { href: '/gazon',                   label: 'Run gazon',    Icon: Sprout as IconType },
+  fermeture:  { href: '/fermeture',               label: 'Run fermeture', Icon: Leaf as IconType },
   soumissions:{ href: '/soumissions',             label: 'Soumissions',  Icon: FileText as IconType },
   payes:      { href: '/payes',                   label: 'Payes',        Icon: Wallet as IconType },
   payesPerso: { href: '/payes',                   label: 'Mes payes',    Icon: Wallet as IconType },
@@ -44,14 +45,14 @@ export const NAV_BY_ROLE: Record<string, NavSection[]> = {
   admin: [
     { title: 'Tableau de bord', items: [I.accueil, I.carte, I.dashboard] },
     { title: 'Ventes',          items: [I.pipeline, I.clients, I.baseD2D] },
-    { title: 'Planification',   items: [I.calFen, I.calPays, I.gazon] },
+    { title: 'Planification',   items: [I.calFen, I.calPays, I.gazon, I.fermeture] },
     { title: 'Finance',         items: [I.soumissions, I.payes] },
     { title: 'Compte',          items: [I.profil] },
   ],
   lead: [
     { title: 'Principal',     items: [I.accueil, I.carte, I.dashboard] },
     { title: 'Ventes',        items: [I.pipeline, I.clients] },
-    { title: 'Planification', items: [I.calFen, I.calPays, I.gazon] },
+    { title: 'Planification', items: [I.calFen, I.calPays, I.gazon, I.fermeture] },
     // pointage : la grille 2026 donne aussi des taux horaires au directeur
     { title: 'Finance',       items: [I.soumissions, I.payesPerso, I.pointage] },
     { title: 'Compte',        items: [I.profil] },
@@ -69,8 +70,8 @@ export const NAV_BY_ROLE: Record<string, NavSection[]> = {
     { title: 'Finance',    items: [I.payesPerso] },
     { title: 'Compte',     items: [I.profil] },
   ],
-  // pas de /gazon : l'employé ouvre SA run depuis son job au calendrier
-  // (« Démarrer la job » → /gazon?route=…), il ne voit pas les autres routes.
+  // pas de /gazon ni /fermeture : l'employé ouvre SA run depuis son job au
+  // calendrier (« Démarrer la job » → /gazon?route=… ou /fermeture?run=…).
   terrain: [
     { title: 'Mon espace', items: [I.pointage, I.horairePays] },
     { title: 'Finance',    items: [I.payesPerso] },
