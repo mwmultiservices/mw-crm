@@ -11,7 +11,8 @@ import {
   payRatesOf, hourlyRateFor, jobPayFor, PAY_MODE_BY_ID, autoPayMode,
   WORK_TYPES, EMPTY_RATES, type PayRates, type WorkType,
 } from '@/lib/payes'
-import { Play, Square, Clock, Navigation } from 'lucide-react'
+import FactureModal from '@/components/factures/FactureModal'
+import { Play, Square, Clock, Navigation, Camera } from 'lucide-react'
 
 const fmtTime = (iso: string | null) =>
   iso ? new Date(iso).toLocaleTimeString('fr-CA', { hour: '2-digit', minute: '2-digit' }) : '—'
@@ -115,6 +116,8 @@ export default function PointagePage() {
   const [now, setNow] = useState(Date.now())
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
+  const [facture, setFacture] = useState(false)          // modal « Entrée de facture »
+  const [factureMsg, setFactureMsg] = useState<string | null>(null)
 
   const weekOf = mondayOf()
 
@@ -238,6 +241,24 @@ export default function PointagePage() {
         )}
       </div>
 
+      {/* Entrée de facture : le reçu d'une dépense en photo, sur la job */}
+      <button onClick={() => { setFactureMsg(null); setFacture(true) }} style={{
+        display: 'flex', alignItems: 'center', gap: 12, width: '100%', textAlign: 'left',
+        padding: '14px 16px', marginBottom: factureMsg ? 8 : 20, borderRadius: 14, cursor: 'pointer',
+        border: '1px solid #69C9CA', background: '#69C9CA14', color: '#0E6B6E',
+      }}>
+        <Camera size={24} style={{ flexShrink: 0 }} />
+        <span style={{ flex: 1, minWidth: 0 }}>
+          <span style={{ display: 'block', fontSize: 15, fontWeight: 800 }}>Entrée de facture</span>
+          <span style={{ display: 'block', fontSize: 12, color: '#374151' }}>Gaz, matériel, dépotoir… prends le reçu en photo</span>
+        </span>
+      </button>
+      {factureMsg && (
+        <div style={{ background: '#ECFDF5', color: '#065F46', border: '1px solid #A7F3D0', borderRadius: 10, padding: '9px 12px', fontSize: 12.5, marginBottom: 20 }}>
+          {factureMsg}
+        </div>
+      )}
+
       {/* Résumé semaine */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
         <h2 style={{ fontSize: 13, fontWeight: 700, color: '#374151', textTransform: 'uppercase', letterSpacing: '0.06em', margin: 0 }}>Ma semaine</h2>
@@ -270,6 +291,15 @@ export default function PointagePage() {
       </div>
       {hourlyRate === 0 && (
         <p style={{ fontSize: 12, color: '#9CA3AF', marginTop: 10 }}>Taux horaire non défini sur ton profil — la paye s&apos;affichera une fois réglé par un admin.</p>
+      )}
+
+      {facture && (
+        <FactureModal
+          userId={profileId}
+          defaultJobId={jobId}
+          onClose={() => setFacture(false)}
+          onSaved={(msg) => { setFacture(false); setFactureMsg(msg) }}
+        />
       )}
     </div>
   )

@@ -5,15 +5,17 @@ import { useSearchParams } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { isManager } from '@/lib/roles'
 import {
-  villeAuto, canonicalCity, villeLabel, runLabel, parseRunLabel, compareVilles, splitSizes, reassignSlots,
-  fullClientAddress, directionsUrl, formatPostal, referencePrefixes, parsePrefixes, VILLES_REFERENCE,
-  FERMETURE_COLOR, type VilleDef,
+  villeAuto, canonicalCity, villeLabel, runLabel, parseRunLabel, compareVilles, splitSizes, splitByDuration,
+  reassignSlots, fullClientAddress, directionsUrl, formatPostal, referencePrefixes, parsePrefixes,
+  fmtDuree, parseDuree, VILLES_REFERENCE, FERMETURE_COLOR, type VilleDef,
 } from '@/lib/fermeture'
 import {
   getFermetureClients, getFermetureVilles, getFermetureJobs, createFermetureClient, updateFermetureClient,
   deleteFermetureClient, setFermetureStatus, saveFermeturePlan, createFermetureVille, deleteFermetureVille,
-  type FermetureClient, type FermetureVille, type FermetureClientInput,
+  fermetureHasPlanColumns, type FermetureClient, type FermetureVille, type FermetureClientInput,
 } from '@/lib/queries/fermeture'
+import { currentJobOf } from '@/lib/queries/factures'
+import { money, money2 } from '@/lib/payes'
 import { optimizeRoute, shopNavUrl } from '@/lib/queries/gazon'
 import { searchClients, createClientEverywhere, type Client } from '@/lib/queries/clients'
 import { getAssignableProfiles, type Job, type AssignProfile } from '@/lib/queries/calendar'
@@ -23,9 +25,10 @@ import JobModal from '@/components/calendar/JobModal'
 import { LANES } from '@/components/calendar/CalendarView'
 import type { ProfileMini } from '@/components/calendar/WeekCalendar'
 import AddressPreviewButton from '@/components/ui/AddressPreviewButton'
+import FactureModal from '@/components/factures/FactureModal'
 import {
   ArrowLeft, Plus, Pencil, Sparkles, Loader2, Navigation, Phone, Camera, Check, AlertTriangle, X,
-  Trash2, GripVertical, Home, Scissors, CalendarPlus, CalendarDays, Play, UserPlus, Route, RotateCcw,
+  Trash2, GripVertical, Home, Scissors, CalendarPlus, CalendarDays, Play, UserPlus, Route, RotateCcw, Clock,
 } from 'lucide-react'
 
 // ============================================================
@@ -38,6 +41,8 @@ import {
 //   4. « Réorganiser » : glisser entre villes / journées, « + Ville » ;
 //   5. « Diviser en journées » : Longueuil #1, Longueuil #2… ;
 //   6. chaque journée part au calendrier Paysagement (job type 'fermeture').
+// Chaque client a un temps estimé (et un prix, admin) : total sous chaque
+// journée et chaque ville, et « Diviser » équilibre les journées selon le temps.
 // Vue employé : /fermeture?run=Longueuil%20%231 (lien « Démarrer » du job).
 // ============================================================
 
@@ -69,6 +74,31 @@ const fmtDur = (s: number) => {
   return min >= 60 ? `${Math.floor(min / 60)} h ${String(min % 60).padStart(2, '0')}` : `${min} min`
 }
 const plural = (n: number, word: string) => `${n} ${word}${n > 1 ? 's' : ''}`
+const fmtPrice = (n: number) => (n % 1 ? money2(n) : money(n))
+// « 08:00 » + 570 min → « 17:30 » (borné à 23:59)
+const timePlus = (time: string, minutes: number) => {
+  const [h, m] = time.split(':').map(Number)
+  const t = Math.min(h * 60 + m + Math.round(minutes), 23 * 60 + 59)
+  return `${String(Math.floor(t / 60)).padStart(2, '0')}:${String(t % 60).padStart(2, '0')}`
+}
+// choix rapides du temps estimé (minutes)
+const DUREE_CHOICES = [30, 45, 60, 90, 120, 180]
+
+// Totaux d'un groupe (journée, ville) — « à ne pas faire » exclus.
+// reste = temps des clients pas encore faits / évités.
+interface Totals { count: number; minutes: number; reste: number; price: number; sansTemps: number }
+function totalsOf(items: FermetureClient[]): Totals {
+  const t: Totals = { count: 0, minutes: 0, reste: 0, price: 0, sansTemps: 0 }
+  for (const c of items) {
+    if (c.a_eviter) continue
+    t.count++
+    t.price += Number(c.price) || 0
+    if (!c.duree_min) { t.sansTemps++; continue }
+    t.minutes += c.duree_min
+    if (!c.status) t.reste += c.duree_min
+  }
+  return t
+}
 
 // Ordre de passage à l'intérieur d'une journée.
 const byPosition = (a: FermetureClient, b: FermetureClient) =>
@@ -149,6 +179,9 @@ function FermetureRun() {
   const [optProgress, setOptProgress] = useState<string | null>(null)
   const [optError, setOptError] = useState<string | null>(null)
   const [savingOrder, setSavingOrder] = useState(false)
+  const [factureOpen, setFactureOpen] = useState(false) // « Entrée de facture » (vue employé)
+  // prix + temps estimé : colonnes récentes (migration_crm_fermeture_factures.sql)
+  const [planColsMissing, setPlanColsMissing] = useState(false)
 
   const admin = isManager(role)
 
@@ -176,7 +209,8 @@ function FermetureRun() {
       const map: Record<string, ProfileMini> = {}
       for (const p of all ?? []) map[p.id] = { full_name: p.full_name, color: p.color }
       setProfileMap(map)
-      await Promise.all([loadClients(), loadVilles(), loadJobs()])
+      await Promise.all([loadClients(), loadVilles(), loadJobs(),
+        fermetureHasPlanColumns().then((ok) => { if (!cancelled) setPlanColsMissing(!ok) })])
       // employés assignables au JobModal (« Planifier » une journée) — admin seulement
       if (isManager(r)) {
         const list = await getAssignableProfiles(['terrain', 'rep'])
@@ -352,6 +386,16 @@ function FermetureRun() {
     loadClients()
   }
 
+  // temps estimé d'une journée (« Au calendrier » : la fin suit ce temps)
+  const runMinutes = (run: string) => {
+    const r = parseRunLabel(run)
+    return r ? totalsOf(clients.filter((c) => c.ville === r.ville && c.journee === r.journee)).minutes : 0
+  }
+
+  // job de la journée verrouillée (Entrée de facture) : celle d'aujourd'hui, sinon la 1re
+  const lockedJobs = locked ? jobsByRun.get(runLabel(locked.ville, locked.journee)) ?? [] : []
+  const lockedJob = currentJobOf(lockedJobs) ?? lockedJobs[0] ?? null
+
   if (loading) return <div style={page}><div style={{ padding: 40, textAlign: 'center', color: '#9CA3AF' }}>Chargement…</div></div>
 
   // Journée au calendrier : date(s) du job, ou bouton pour la planifier (admin).
@@ -397,6 +441,12 @@ function FermetureRun() {
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 12 }}>
         <h1 style={{ fontSize: 22, fontWeight: 700, color: '#111827', margin: 0 }}>🍂 {title}</h1>
         {locked && scheduleChip(runLabel(locked.ville, locked.journee))}
+        {/* sur la job : le reçu d'une dépense (gaz, dépotoir…) en photo */}
+        {locked && (
+          <button onClick={() => { setFlash(null); setFactureOpen(true) }} title="Entrée de facture" style={chipBtn(TEAL)}>
+            <Camera size={13} />Facture
+          </button>
+        )}
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           {admin && !locked && !editMode && !preview && clients.length > 0 && (
             <button onClick={() => { setFlash(null); setEditMode(true) }} style={{ ...addBtn, background: '#F3F4F6', color: '#374151' }}>
@@ -597,6 +647,7 @@ function FermetureRun() {
                             <ClientCard
                               key={c.id}
                               c={c}
+                              admin={admin}
                               step={run ? i + 1 : undefined}
                               isNext={c.id === nextStop?.id}
                               doneBy={c.done_by ? profileMap[c.done_by]?.full_name ?? null : null}
@@ -605,10 +656,16 @@ function FermetureRun() {
                               onOpen={() => setModal({ client: c })}
                             />
                           ))}
+                          {/* total de la journée, sous le dernier client */}
+                          <TotalLine label={run ?? 'À planifier'} t={totalsOf(d.items)} admin={admin} />
                         </div>
                       </div>
                     )
                   })}
+                  {/* total de la ville (toutes ses journées + à planifier) */}
+                  {!runScope && s.days.length > 1 && (
+                    <TotalLine label={`Total ${villeLabel(s.ville)}`} t={totalsOf(cityItems)} admin={admin} strong />
+                  )}
                 </div>
               </div>
             )
@@ -643,6 +700,7 @@ function FermetureRun() {
           tableMissing={!!migrationError}
           maxPosition={maxPosition}
           profileMap={profileMap}
+          planColsMissing={planColsMissing}
           onClose={() => setModal(null)}
           onSaved={(msg) => { setModal(null); if (msg) setFlash(msg); loadClients() }}
         />
@@ -660,6 +718,7 @@ function FermetureRun() {
         <DivideModal
           ville={divideFor}
           clients={clients.filter((c) => c.ville === divideFor)}
+          admin={admin}
           onClose={() => setDivideFor(null)}
           onSaved={(msg) => { setDivideFor(null); setFlash(msg); loadClients() }}
         />
@@ -675,7 +734,7 @@ function FermetureRun() {
           profileMap={profileMap}
           initialDate={jobModal.date}
           initialStart="08:00"
-          initialEnd="16:00"
+          initialEnd={runMinutes(jobModal.run) ? timePlus('08:00', runMinutes(jobModal.run)) : '16:00'}
           initialTeam={LANES[0]?.id}
           initialType="fermeture"
           initialRoute={jobModal.run}
@@ -689,6 +748,41 @@ function FermetureRun() {
           }}
         />
       )}
+
+      {factureOpen && (
+        <FactureModal
+          userId={userId}
+          isAdmin={admin}
+          defaultJobId={lockedJob?.id ?? null}
+          onClose={() => setFactureOpen(false)}
+          onSaved={(msg) => { setFactureOpen(false); setFlash(msg) }}
+        />
+      )}
+    </div>
+  )
+}
+
+// Ligne de total sous le dernier client : « Longueuil #1 : 9 h 30 » (+ prix, admin).
+// Rien tant qu'aucun client du groupe n'a de temps estimé (ni de prix).
+function TotalLine({ label, t, admin, strong }: { label: string; t: Totals; admin: boolean; strong?: boolean }) {
+  if (!t.minutes && !(admin && t.price)) return null
+  const extra = [
+    plural(t.count, 'client'),
+    t.reste > 0 && t.reste < t.minutes ? `reste ${fmtDuree(t.reste)}` : null,
+    t.sansTemps > 0 ? `${t.sansTemps} sans temps` : null,
+  ].filter(Boolean).join(' · ')
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', borderRadius: 10,
+      padding: strong ? '9px 12px' : '7px 12px', fontSize: strong ? 13.5 : 12.5,
+      background: strong ? FERMETURE_COLOR + '14' : '#F3F4F6',
+      border: strong ? `1px solid ${FERMETURE_COLOR}40` : '1px solid transparent',
+      color: strong ? '#7C2D12' : '#374151',
+    }}>
+      <Clock size={strong ? 15 : 14} style={{ flexShrink: 0 }} />
+      <strong>{label} : {t.minutes ? fmtDuree(t.minutes) : '—'}</strong>
+      <span style={{ color: strong ? '#9A3412' : '#6B7280' }}>{extra}</span>
+      {admin && t.price > 0 && <strong style={{ marginLeft: 'auto', color: GREEN }}>{fmtPrice(t.price)}</strong>}
     </div>
   )
 }
@@ -696,8 +790,9 @@ function FermetureRun() {
 // ============================================================
 // Carte client — FAIT / À ÉVITER + GPS + tél
 // ============================================================
-function ClientCard({ c, step, isNext, doneBy, skipped, onToggle, onOpen }: {
+function ClientCard({ c, admin, step, isNext, doneBy, skipped, onToggle, onOpen }: {
   c: FermetureClient
+  admin: boolean             // le prix n'est montré qu'à l'admin
   step?: number              // rang dans la journée
   isNext?: boolean           // cible actuelle de « Prochain client »
   doneBy: string | null
@@ -728,6 +823,8 @@ function ClientCard({ c, step, isNext, doneBy, skipped, onToggle, onOpen }: {
             {isNext && <Badge color={TEAL}>▶ PROCHAIN</Badge>}
             {c.a_eviter && <Badge color="#DC2626">À NE PAS FAIRE</Badge>}
             {skipped && <Badge color={ORANGE}>ADRESSE INTROUVABLE</Badge>}
+            {c.duree_min ? <Badge color="#374151">⏱ {fmtDuree(c.duree_min)}</Badge> : null}
+            {admin && c.price != null && <Badge color={GREEN}>{fmtPrice(c.price)}</Badge>}
             {c.superficie_pi2 != null && <Badge color={TEAL}>{c.superficie_pi2.toLocaleString('fr-CA')} pi²</Badge>}
             {c.photos.length > 0 && <Badge color="#6B7280">📷 {c.photos.length}</Badge>}
           </div>
@@ -815,7 +912,7 @@ function PlanBoard({ clients, customs, onCancel, onSaved }: {
       for (let j = 1; j <= max; j++) days.push({ journee: j, items: items.filter((c) => c.journee === j) })
       days.push({ journee: null, items: items.filter((c) => c.journee == null) })
       const def = defs.find((d) => d.name === ville)
-      return { ville, max, days, count: items.length, def }
+      return { ville, max, days, count: items.length, minutes: totalsOf(items).minutes, def }
     })
   }, [draft, defs, extraDays])
 
@@ -922,6 +1019,7 @@ function PlanBoard({ clients, customs, onCancel, onSaved }: {
               <Route size={14} color={GREEN} style={{ flexShrink: 0 }} />
               <span style={{ fontSize: 14, fontWeight: 800, color: '#111827' }}>{villeLabel(b.ville)}</span>
               <Count n={b.count} />
+              {b.minutes > 0 && <Count n={`· ⏱ ${fmtDuree(b.minutes)}`} />}
               {b.def && b.def.prefixes.length > 0 && <Badge color="#6B7280">{b.def.prefixes.join(' · ')}</Badge>}
               <span style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
                 <button onClick={() => setExtraDays((p) => ({ ...p, [b.ville]: b.max + 1 }))} style={chipBtn('#374151')}>
@@ -952,6 +1050,7 @@ function PlanBoard({ clients, customs, onCancel, onSaved }: {
                   >
                     <div style={{ fontSize: 11, fontWeight: 800, color: d.journee == null ? ORANGE : '#374151', textTransform: 'uppercase', letterSpacing: '0.05em', padding: '2px 4px 6px' }}>
                       {d.journee == null ? 'À planifier' : runLabel(b.ville, d.journee)} <Count n={d.items.length} />
+                      {totalsOf(d.items).minutes > 0 && <Count n={` · ⏱ ${fmtDuree(totalsOf(d.items).minutes)}`} />}
                     </div>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
                       {d.items.length === 0 && (
@@ -1099,11 +1198,14 @@ function AddVilleModal({ existing, customNames, countFor, onClose, onAdd }: {
 }
 
 // ============================================================
-// Diviser une ville en journées (#1, #2…) dans l'ordre de passage actuel
+// Diviser une ville en journées (#1, #2…) dans l'ordre de passage actuel.
+// Selon le TEMPS estimé (défaut dès qu'un client en a un) : 9 clients en 3
+// journées → 5-2-2 si les 5 premiers sont courts ; sinon par nombre de clients.
 // ============================================================
-function DivideModal({ ville, clients, onClose, onSaved }: {
+function DivideModal({ ville, clients, admin, onClose, onSaved }: {
   ville: string
   clients: FermetureClient[] // tous les clients de la ville
+  admin: boolean
   onClose: () => void
   onSaved: (message: string) => void
 }) {
@@ -1113,13 +1215,23 @@ function DivideModal({ ville, clients, onClose, onSaved }: {
   const doneCount = ordered.filter((c) => c.status === 'fait').length
   const currentDays = new Set(todo.map((c) => c.journee).filter((j) => j != null)).size
   const [days, setDays] = useState(Math.min(Math.max(currentDays || 2, 1), Math.max(todo.length, 1)))
+  // clients sans temps estimé : comptés à la moyenne des autres
+  const known = todo.filter((c) => c.duree_min)
+  const avg = known.length ? Math.round(known.reduce((sum, c) => sum + c.duree_min!, 0) / known.length) : 0
+  const [byTime, setByTime] = useState(known.length > 0)
+  const timeMode = byTime && known.length > 0
+  const dureeOf = (c: FermetureClient) => c.duree_min || avg
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
 
-  const sizes = splitSizes(todo.length, days)
+  const sizes = timeMode ? splitByDuration(todo.map(dureeOf), days) : splitSizes(todo.length, days)
   const chunks: FermetureClient[][] = []
   let k = 0
   for (const size of sizes) { chunks.push(todo.slice(k, k + size)); k += size }
+  const minutesOf = (ch: FermetureClient[]) => ch.reduce((sum, c) => sum + dureeOf(c), 0)
+  const totalMin = minutesOf(todo)
+  const approx = known.length < todo.length ? '≈ ' : '' // une moyenne entre dans le compte
+  const priceOf = (ch: FermetureClient[]) => ch.reduce((sum, c) => sum + (Number(c.price) || 0), 0)
 
   const save = async (updates: { id: string; journee: number | null }[], message: string) => {
     setSaving(true); setError('')
@@ -1133,7 +1245,10 @@ function DivideModal({ ville, clients, onClose, onSaved }: {
     const updates: { id: string; journee: number | null }[] = []
     chunks.forEach((chunk, i) => chunk.forEach((c) => { if (c.journee !== i + 1) updates.push({ id: c.id, journee: i + 1 }) }))
     for (const c of ordered) if (c.status !== 'fait' && c.a_eviter && c.journee != null) updates.push({ id: c.id, journee: null })
-    save(updates, `${villeLabel(ville)} divisée en ${plural(chunks.length, 'journée')} : ${chunks.map((ch, i) => `#${i + 1} (${ch.length})`).join(', ')}.`)
+    const detail = chunks
+      .map((ch, i) => `#${i + 1} (${ch.length}${timeMode ? ` · ${approx}${fmtDuree(minutesOf(ch))}` : ''})`)
+      .join(', ')
+    save(updates, `${villeLabel(ville)} divisée en ${plural(chunks.length, 'journée')} : ${detail}.`)
   }
 
   const unplanAll = () => {
@@ -1150,19 +1265,50 @@ function DivideModal({ ville, clients, onClose, onSaved }: {
       ) : (
         <>
           <div style={{ fontSize: 13, color: '#374151', lineHeight: 1.5, marginBottom: 12 }}>
-            {plural(todo.length, 'client')} à faire, répartis <strong>dans l&apos;ordre de passage actuel</strong>.
+            {plural(todo.length, 'client')} à faire{timeMode ? <> · <strong>{approx}{fmtDuree(totalMin)}</strong> estimées</> : null}, répartis{' '}
+            <strong>dans l&apos;ordre de passage actuel</strong>.
             {doneCount > 0 && <> {doneCount > 1 ? `Les ${doneCount} clients déjà faits restent dans leur journée.` : 'Le client déjà fait reste dans sa journée.'}</>}
           </div>
+
+          {/* répartir selon le temps estimé (journées équilibrées) ou le nombre de clients */}
+          {known.length > 0 ? (
+            <div style={{ display: 'flex', gap: 6, marginBottom: 12 }}>
+              {([[true, '⏱ Temps estimé'], [false, '👥 Nombre de clients']] as const).map(([v, l]) => (
+                <button key={l} onClick={() => setByTime(v)} title={v ? 'Répartir selon le temps estimé' : 'Répartir selon le nombre de clients'} style={{
+                  flex: 1, padding: '7px 6px', borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap',
+                  border: byTime === v ? `2px solid ${TEAL}` : '1px solid #D1D5DB',
+                  background: byTime === v ? '#69C9CA1F' : '#FFF', color: '#374151',
+                }}>{l}</button>
+              ))}
+            </div>
+          ) : (
+            <div style={{ fontSize: 12, color: '#6B7280', background: '#F9FAFB', borderRadius: 10, padding: '8px 10px', marginBottom: 12, lineHeight: 1.45 }}>
+              Ajoute un <strong>temps estimé</strong>{' '}aux clients (fiche du client) pour équilibrer les journées selon
+              le temps : 9 clients → 5-2-2 si les premiers sont plus courts.
+            </div>
+          )}
+
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
             <button onClick={() => setDays(Math.max(1, days - 1))} disabled={days <= 1} style={stepBtn} aria-label="Une journée de moins">−</button>
             <span style={{ fontSize: 16, fontWeight: 800, color: '#111827', minWidth: 110, textAlign: 'center' }}>{plural(days, 'journée')}</span>
             <button onClick={() => setDays(Math.min(todo.length, days + 1))} disabled={days >= todo.length} style={stepBtn} aria-label="Une journée de plus">+</button>
+            {timeMode && (
+              <span style={{ fontSize: 12, color: '#6B7280' }}>≈ {fmtDuree(totalMin / days)} par journée</span>
+            )}
           </div>
+          {timeMode && known.length < todo.length && (
+            <div style={{ fontSize: 11.5, color: '#92400E', marginBottom: 8 }}>
+              {plural(todo.length - known.length, 'client')} sans temps estimé : compté{todo.length - known.length > 1 ? 's' : ''} à la moyenne ({fmtDuree(avg)}).
+            </div>
+          )}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 12 }}>
             {chunks.map((ch, i) => (
               <div key={i} style={{ background: '#F9FAFB', border: '1px solid #E5E7EB', borderRadius: 10, padding: '8px 10px' }}>
-                <div style={{ fontSize: 13, fontWeight: 800, color: '#111827' }}>
-                  {runLabel(ville, i + 1)} <span style={{ fontWeight: 600, color: '#6B7280' }}>· {plural(ch.length, 'client')}</span>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, flexWrap: 'wrap', fontSize: 13, fontWeight: 800, color: '#111827' }}>
+                  {runLabel(ville, i + 1)}
+                  <span style={{ fontWeight: 600, color: '#6B7280' }}>· {plural(ch.length, 'client')}</span>
+                  {timeMode && <span style={{ fontWeight: 700, color: '#374151' }}>· ⏱ {approx}{fmtDuree(minutesOf(ch))}</span>}
+                  {admin && priceOf(ch) > 0 && <span style={{ marginLeft: 'auto', fontWeight: 800, color: GREEN }}>{fmtPrice(priceOf(ch))}</span>}
                 </div>
                 <div style={{ fontSize: 11, color: '#9CA3AF', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                   {ch[0]?.name}{ch.length > 1 ? ` → ${ch[ch.length - 1].name}` : ''}
@@ -1246,7 +1392,8 @@ function WhyModal({ client, onClose, onSaved }: { client: FermetureClient; onClo
 // Modal client — ajout (autocomplétion base clients) / fiche / photos
 // ============================================================
 function ClientModal({
-  client, defaults, customs, villes, maxDayOf, inRun, admin, tableMissing, maxPosition, profileMap, onClose, onSaved,
+  client, defaults, customs, villes, maxDayOf, inRun, admin, tableMissing, maxPosition, profileMap, planColsMissing,
+  onClose, onSaved,
 }: {
   client?: FermetureClient
   defaults?: { ville: string; journee: number | null } // journée ouverte à l'écran
@@ -1258,6 +1405,7 @@ function ClientModal({
   tableMissing: boolean
   maxPosition: number
   profileMap: Record<string, ProfileMini>
+  planColsMissing: boolean // prix / temps estimé pas encore en base
   onClose: () => void
   onSaved: (message?: string) => void
 }) {
@@ -1270,6 +1418,9 @@ function ClientModal({
   const [phone, setPhone] = useState(client?.phone ?? '')
   const [email, setEmail] = useState(client?.email ?? '')
   const [superficie, setSuperficie] = useState(client?.superficie_pi2 != null ? String(client.superficie_pi2) : '')
+  // temps estimé : saisie libre (« 1h30 », « 1:30 », « 1,5 », « 90 min »)
+  const [duree, setDuree] = useState(client?.duree_min ? fmtDuree(client.duree_min) : '')
+  const [price, setPrice] = useState(client?.price != null ? String(client.price) : '')
   const [notes, setNotes] = useState(client?.notes ?? '')
   const [aEviter, setAEviter] = useState(client?.a_eviter ?? false)
   const [photos, setPhotos] = useState<string[]>(client?.photos ?? [])
@@ -1356,8 +1507,15 @@ function ClientModal({
     deletePhoto(path)
   }
 
+  const dureeMin = parseDuree(duree) // null = vide, NaN = illisible
+  const dureeBad = Number.isNaN(dureeMin)
+  const priceRaw = price.replace(/,/g, '.').replace(/[^\d.]/g, '')
+  const priceVal = price.trim() ? (priceRaw ? Number(priceRaw) : NaN) : null
+
   const save = async () => {
     if (!name.trim()) { setError('Nom du client requis.'); return }
+    if (dureeBad) { setError('Temps estimé illisible — ex. 1h30, 1:30, 1,5 ou 90 min.'); return }
+    if (priceVal != null && Number.isNaN(priceVal)) { setError('Prix illisible.'); return }
     setSaving(true); setError('')
     let linkedId = clientId
     let crmNote = ''
@@ -1395,6 +1553,12 @@ function ClientModal({
       superficie_pi2: superficie ? Number(superficie) : null,
       notes: notes.trim() || null,
       a_eviter: aEviter,
+    }
+    // colonnes récentes : seulement si la migration est passée ; le prix
+    // n'est touché que par l'admin (un employé ne l'efface pas en enregistrant)
+    if (!planColsMissing) {
+      payload.duree_min = dureeMin
+      if (admin) payload.price = priceVal
     }
     const { error: e } = isEdit
       ? await updateFermetureClient(client!.id, payload)
@@ -1548,7 +1712,47 @@ function ClientModal({
           </div>
         </div>
 
+        {/* temps estimé (tous) + prix (admin) : totaux par journée / ville */}
+        {planColsMissing && (
+          <div style={{ background: '#FFFBEB', color: '#92400E', border: '1px solid #FCD34D', borderRadius: 8, padding: '8px 10px', fontSize: 12, lineHeight: 1.45 }}>
+            ⚠️ Temps estimé et prix pas encore actifs : appliquer <b>migration_crm_fermeture_factures.sql</b>{' '}
+            dans Supabase (SQL Editor).
+          </div>
+        )}
+        <div>
+          <Field label="Temps estimé">
+            <input
+              value={duree}
+              onChange={(e) => setDuree(e.target.value)}
+              onBlur={() => { if (dureeMin && !dureeBad) setDuree(fmtDuree(dureeMin)) }}
+              style={{ ...inp, borderColor: dureeBad ? '#DC2626' : '#D1D5DB' }}
+              placeholder="ex. 1h30"
+              disabled={planColsMissing}
+            />
+          </Field>
+          {/* hors du <label> : un tap sur son titre « cliquerait » la 1re pastille */}
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 6 }}>
+            {DUREE_CHOICES.map((m) => (
+              <button key={m} type="button" disabled={planColsMissing} onClick={() => setDuree(fmtDuree(m))} style={{
+                padding: '4px 10px', borderRadius: 999, fontSize: 12, fontWeight: 700, cursor: 'pointer',
+                border: dureeMin === m ? `2px solid ${TEAL}` : '1px solid #D1D5DB',
+                background: dureeMin === m ? '#69C9CA1F' : '#FFF', color: '#374151',
+              }}>{fmtDuree(m)}</button>
+            ))}
+          </div>
+          {duree.trim() && (
+            <p style={{ margin: '5px 2px 0', fontSize: 11, color: dureeBad ? '#DC2626' : '#6B7280' }}>
+              {dureeBad ? 'Format : 1h30, 1:30, 1,5 ou 90 min.' : dureeMin ? `= ${fmtDuree(dureeMin)}` : ''}
+            </p>
+          )}
+        </div>
+
         <div style={{ display: 'flex', gap: 10 }}>
+          {admin && (
+            <Field label="Prix ($)" flex>
+              <input value={price} onChange={(e) => setPrice(e.target.value)} style={inp} inputMode="decimal" placeholder="0" disabled={planColsMissing} />
+            </Field>
+          )}
           <Field label="Pied carré (pi²)" flex><input value={superficie} onChange={(e) => setSuperficie(e.target.value)} style={inp} type="number" inputMode="numeric" /></Field>
         </div>
 

@@ -1,12 +1,13 @@
 import { supabase } from '@/lib/supabase'
 import { runLabel, compareVilles, type VilleDef } from '@/lib/fermeture'
-import type { Job } from '@/lib/queries/calendar'
+import { missingColumn, tableHasColumn, type Job } from '@/lib/queries/calendar'
 
 // ============================================================
 // Run fermeture — clients de la saison de fermeture, classés par ville
 // (code postal) et répartis en journées (« Longueuil #1 »…) planifiées au
 // calendrier Paysagement (jobs.type = 'fermeture', route_name = la journée).
-// Tables : fermeture_clients / fermeture_villes (migration_crm_fermeture.sql).
+// Tables : fermeture_clients / fermeture_villes (migration_crm_fermeture.sql) ;
+// prix + temps estimé : migration_crm_fermeture_factures.sql (tolérée absente).
 // Contrairement au gazon (suivi hebdo), un client de fermeture n'a qu'UN
 // statut pour la saison : fait / évité, porté par sa propre ligne.
 // ============================================================
@@ -24,6 +25,8 @@ export interface FermetureClient {
   journee: number | null        // n° de journée dans la ville (#1, #2…) ; null = à planifier
   position: number              // ordre de passage (croissant) à l'intérieur d'une journée
   superficie_pi2: number | null
+  price: number | null          // prix de la job (admin) — colonne récente
+  duree_min: number | null      // temps estimé en minutes — colonne récente
   notes: string | null
   photos: string[]
   a_eviter: boolean             // admin : à ne pas faire
@@ -47,18 +50,50 @@ export async function getFermetureClients(): Promise<{ clients: FermetureClient[
     .select('*')
     .order('position', { ascending: true })
     .order('created_at', { ascending: true })
-  const clients = ((data as FermetureClient[]) ?? []).map((c) => ({ ...c, ville: c.ville ?? '', photos: c.photos ?? [] }))
+  const clients = ((data as FermetureClient[]) ?? []).map((c) => ({
+    ...c,
+    ville: c.ville ?? '',
+    photos: c.photos ?? [],
+    // colonnes absentes tant que la migration n'est pas passée → null
+    price: c.price != null ? Number(c.price) : null,
+    duree_min: c.duree_min ?? null,
+  }))
   return { clients, error: error?.message ?? null }
 }
 
+// Prix et temps estimé existent-ils déjà en base ? (avertissement du modal)
+export async function fermetureHasPlanColumns(): Promise<boolean> {
+  const [price, duree] = await Promise.all([
+    tableHasColumn('fermeture_clients', 'price'),
+    tableHasColumn('fermeture_clients', 'duree_min'),
+  ])
+  return price && duree
+}
+
+// Enregistre en retirant les colonnes que la base ne connaît pas encore
+// (prix, temps estimé) : on sauve le client sans ces champs plutôt que de
+// perdre toute la saisie.
+async function writeTolerant(
+  input: FermetureClientInput,
+  run: (payload: FermetureClientInput) => PromiseLike<{ error: { message: string } | null }>,
+): Promise<{ error: string | null }> {
+  const payload: Record<string, unknown> = { ...input }
+  for (let i = 0; i < 3; i++) {
+    const { error } = await run(payload as FermetureClientInput)
+    if (!error) return { error: null }
+    const col = missingColumn(error.message)
+    if (!col || !(col in payload)) return { error: error.message }
+    delete payload[col]
+  }
+  return { error: 'Enregistrement impossible : colonnes manquantes en base.' }
+}
+
 export async function createFermetureClient(input: FermetureClientInput): Promise<{ error: string | null }> {
-  const { error } = await supabase.from('fermeture_clients').insert(input)
-  return { error: error?.message ?? null }
+  return writeTolerant(input, (p) => supabase.from('fermeture_clients').insert(p))
 }
 
 export async function updateFermetureClient(id: string, patch: FermetureClientInput): Promise<{ error: string | null }> {
-  const { error } = await supabase.from('fermeture_clients').update(patch).eq('id', id)
-  return { error: error?.message ?? null }
+  return writeTolerant(patch, (p) => supabase.from('fermeture_clients').update(p).eq('id', id))
 }
 
 export async function deleteFermetureClient(id: string): Promise<{ error: string | null }> {
@@ -118,19 +153,34 @@ export async function getFermetureJobs(): Promise<Job[]> {
   return (data as Job[]) ?? []
 }
 
-// Journées existantes (« Longueuil #1 »…) — menu du JobModal. Table absente → [].
-export async function getFermetureRunLabels(): Promise<string[]> {
+// Journées existantes (« Longueuil #1 »…) avec leur charge : menu et temps
+// estimé du JobModal. « À ne pas faire » exclus. Table absente → [].
+// '*' et pas une liste : duree_min n'existe pas tant que la migration manque.
+export interface FermetureRun {
+  label: string
+  ville: string
+  journee: number
+  count: number     // clients à faire dans la journée
+  minutes: number   // temps estimé total
+  sansTemps: number // clients sans temps estimé
+}
+
+export async function getFermetureRuns(): Promise<FermetureRun[]> {
   const { data, error } = await supabase
     .from('fermeture_clients')
-    .select('ville, journee')
+    .select('*')
     .not('journee', 'is', null)
   if (error || !data) return []
-  const runs = new Map<string, { ville: string; journee: number }>()
-  for (const r of data as { ville: string | null; journee: number }[]) {
+  const runs = new Map<string, FermetureRun>()
+  for (const r of data as FermetureClient[]) {
     const ville = r.ville ?? ''
-    runs.set(runLabel(ville, r.journee), { ville, journee: r.journee })
+    const label = runLabel(ville, r.journee!)
+    const run = runs.get(label) ?? { label, ville, journee: r.journee!, count: 0, minutes: 0, sansTemps: 0 }
+    runs.set(label, run)
+    if (r.a_eviter) continue
+    run.count++
+    if (r.duree_min) run.minutes += r.duree_min
+    else run.sansTemps++
   }
-  return [...runs.entries()]
-    .sort(([, a], [, b]) => compareVilles(a.ville, b.ville) || a.journee - b.journee)
-    .map(([label]) => label)
+  return [...runs.values()].sort((a, b) => compareVilles(a.ville, b.ville) || a.journee - b.journee)
 }

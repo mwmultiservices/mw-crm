@@ -7,7 +7,10 @@
 //     libellé est stocké dans jobs.route_name (type 'fermeture') et sert de
 //     clé à /fermeture?run=… (vue employé verrouillée sur SA journée) ;
 //   • l'adresse complète envoyée à Google (optimisation, navigation).
-// Tables : fermeture_clients / fermeture_villes (migration_crm_fermeture.sql).
+//   • le temps estimé d'un client (saisie « 1h30 », totaux « 9 h 30 ») et le
+//     découpage des journées selon ce temps (splitByDuration).
+// Tables : fermeture_clients / fermeture_villes (migration_crm_fermeture.sql ;
+// prix + temps estimé : migration_crm_fermeture_factures.sql).
 // ============================================================
 
 export interface VilleDef {
@@ -225,6 +228,88 @@ export function splitSizes(count: number, days: number): number[] {
   const base = Math.floor(count / d)
   const extra = count % d
   return Array.from({ length: d }, (_, i) => base + (i < extra ? 1 : 0))
+}
+
+// Journées équilibrées selon le TEMPS estimé : les clients gardent l'ordre de
+// passage (tranches contiguës) et chaque journée vise total ÷ journées.
+// 9 clients en 3 journées → [5, 2, 2] si les 5 premiers sont courts. Durées
+// toutes égales → même découpage que splitSizes (les premières journées
+// prennent le reste). Coût d'une journée = (journées × somme − total)² :
+// entiers exacts, donc pas d'égalité ratée en virgule flottante.
+export function splitByDuration(durations: number[], days: number): number[] {
+  const n = durations.length
+  const d = Math.max(1, Math.min(Math.floor(days) || 1, Math.max(n, 1)))
+  const w = durations.map((x) => Math.max(0, Math.round(Number(x) || 0)))
+  const pre = [0]
+  for (const x of w) pre.push(pre[pre.length - 1] + x)
+  const total = pre[n]
+  if (n === 0 || total === 0) return splitSizes(n, d)
+  const cost = (a: number, b: number) => {
+    const s = d * (pre[b] - pre[a]) - total
+    return s * s
+  }
+  // best[j][i] : meilleur coût des i premiers clients en j journées non vides
+  const best = Array.from({ length: d + 1 }, () => new Array<number>(n + 1).fill(Infinity))
+  const cut = Array.from({ length: d + 1 }, () => new Array<number>(n + 1).fill(0))
+  best[0][0] = 0
+  for (let j = 1; j <= d; j++) {
+    for (let i = j; i <= n - (d - j); i++) {
+      for (let p = j - 1; p < i; p++) {
+        if (best[j - 1][p] === Infinity) continue
+        const c = best[j - 1][p] + cost(p, i)
+        // à égalité, la dernière tranche la plus courte (p le plus grand)
+        if (c <= best[j][i]) { best[j][i] = c; cut[j][i] = p }
+      }
+    }
+  }
+  const sizes: number[] = []
+  for (let j = d, i = n; j >= 1; j--) {
+    const p = cut[j][i]
+    sizes.unshift(i - p)
+    i = p
+  }
+  return sizes
+}
+
+// ------------------------------------------------------------
+// Temps estimé d'un client (fermeture_clients.duree_min, en minutes)
+// ------------------------------------------------------------
+
+// 570 → « 9 h 30 », 60 → « 1 h », 45 → « 45 min »
+export function fmtDuree(min: number | null | undefined): string {
+  const m = Math.max(0, Math.round(Number(min) || 0))
+  const h = Math.floor(m / 60)
+  const r = m % 60
+  if (!h) return `${r} min`
+  return r ? `${h} h ${String(r).padStart(2, '0')}` : `${h} h`
+}
+
+// Saisie libre → minutes : « 1h30 », « 1 h 30 », « 1:30 », « 1,5 », « 1.5 h »,
+// « 90 min ». Un entier seul : ≤ 9 = des heures (« 2 » → 2 h), sinon des
+// minutes (« 45 » → 45 min). Vide (ou 0) → null ; illisible → NaN.
+export function parseDuree(text: string | null | undefined): number | null {
+  const t = (text ?? '').trim().toLowerCase().replace(/,/g, '.').replace(/\s+/g, ' ')
+  if (!t) return null
+  let min: number
+  let m: RegExpExecArray | null
+  if ((m = /^(\d+(?:\.\d+)?) ?h(?:eures?|rs?)? ?(?:(\d{1,2}) ?(?:min|mn|m)?)?$/.exec(t))) {
+    const extra = m[2] ? Number(m[2]) : 0
+    if (extra > 59) return NaN
+    min = Number(m[1]) * 60 + extra
+  } else if ((m = /^(\d+):(\d{1,2})$/.exec(t))) {
+    if (Number(m[2]) > 59) return NaN
+    min = Number(m[1]) * 60 + Number(m[2])
+  } else if ((m = /^(\d+(?:\.\d+)?) ?(?:min|mins|minutes?|mn|m)$/.exec(t))) {
+    min = Number(m[1])
+  } else if ((m = /^(\d+(?:\.\d+)?)$/.exec(t))) {
+    const n = Number(m[1])
+    min = m[1].includes('.') || n <= 9 ? n * 60 : n
+  } else {
+    return NaN
+  }
+  min = Math.round(min)
+  if (min === 0) return null
+  return min > 24 * 60 ? NaN : min
 }
 
 // Positions à redistribuer dans un nouvel ordre : les mêmes valeurs, triées,

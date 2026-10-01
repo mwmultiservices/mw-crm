@@ -118,26 +118,27 @@ export interface JobInput {
 
 // Colonne réclamée par PostgREST quand elle n'existe pas encore en base :
 // « Could not find the 'pay_hours' column of 'jobs' in the schema cache ».
-function missingColumn(message: string): string | null {
+export function missingColumn(message: string): string | null {
   return /Could not find the '([a-z_]+)' column/.exec(message)?.[1] ?? null
 }
 
-// La colonne existe-t-elle déjà dans `jobs` ? Sert à AVERTIR dans le modal
-// quand une saisie serait jetée par saveJob (migration pas appliquée).
-// Une erreur réseau ou autre ≠ colonne absente → true (pas de fausse alerte).
-// Mémorisé pour la session : une migration appliquée entre-temps est vue au
-// prochain chargement de page.
-const jobColumnProbe = new Map<string, Promise<boolean>>()
-export function jobsHasColumn(col: string): Promise<boolean> {
-  let probe = jobColumnProbe.get(col)
+// La colonne existe-t-elle déjà ? Sert à AVERTIR dans un modal quand une
+// saisie serait jetée (migration pas appliquée). Une erreur réseau ou autre
+// ≠ colonne absente → true (pas de fausse alerte). Mémorisé pour la session :
+// une migration appliquée entre-temps est vue au prochain chargement de page.
+const columnProbe = new Map<string, Promise<boolean>>()
+export function tableHasColumn(table: string, col: string): Promise<boolean> {
+  const key = `${table}.${col}`
+  let probe = columnProbe.get(key)
   if (!probe) {
-    probe = Promise.resolve(supabase.from('jobs').select(col).limit(1))
+    probe = Promise.resolve(supabase.from(table).select(col).limit(1))
       .then(({ error }) => !(error && /does not exist|Could not find/i.test(error.message)))
       .catch(() => true)
-    jobColumnProbe.set(col, probe)
+    columnProbe.set(key, probe)
   }
   return probe
 }
+export const jobsHasColumn = (col: string): Promise<boolean> => tableHasColumn('jobs', col)
 
 // Enregistre en retirant les colonnes que la base ne connaît pas encore
 // (migration pas appliquée) : on préfère sauver la job sans ce champ plutôt
@@ -179,8 +180,9 @@ export function jobDirectionsUrl(job: Pick<Job, 'address'>): string | null {
 }
 
 // ============================================================
-// Photos & dépenses de job (projets pavé/taillage…) — tables job_photos /
-// job_expenses (migration_crm_gazon_paye.sql). error non-null = migration absente.
+// Photos de job (projets pavé/taillage…) — table job_photos
+// (migration_crm_gazon_paye.sql). error non-null = migration absente.
+// Les dépenses (job_expenses) = factures : lib/queries/factures.ts.
 // ============================================================
 
 export interface JobPhoto {
@@ -189,17 +191,6 @@ export interface JobPhoto {
   path: string
   caption: string | null
   author_id: string | null
-  created_at: string
-  profiles?: { full_name: string | null } | null
-}
-
-export interface JobExpense {
-  id: string
-  job_id: string
-  profile_id: string | null
-  label: string
-  amount: number
-  photo_path: string | null
   created_at: string
   profiles?: { full_name: string | null } | null
 }
@@ -220,25 +211,6 @@ export async function addJobPhoto(jobId: string, path: string, authorId: string 
 
 export async function deleteJobPhoto(id: string): Promise<{ error: string | null }> {
   const { error } = await supabase.from('job_photos').delete().eq('id', id)
-  return { error: error?.message ?? null }
-}
-
-export async function getJobExpenses(jobId: string): Promise<{ expenses: JobExpense[]; error: string | null }> {
-  const { data, error } = await supabase
-    .from('job_expenses')
-    .select('*, profiles(full_name)')
-    .eq('job_id', jobId)
-    .order('created_at', { ascending: true })
-  return { expenses: (data as JobExpense[]) ?? [], error: error?.message ?? null }
-}
-
-export async function addJobExpense(input: { job_id: string; profile_id: string | null; label: string; amount: number; photo_path?: string | null }): Promise<{ error: string | null }> {
-  const { error } = await supabase.from('job_expenses').insert(input)
-  return { error: error?.message ?? null }
-}
-
-export async function deleteJobExpense(id: string): Promise<{ error: string | null }> {
-  const { error } = await supabase.from('job_expenses').delete().eq('id', id)
   return { error: error?.message ?? null }
 }
 

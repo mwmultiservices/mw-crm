@@ -3,7 +3,7 @@
 // du téléphone/de la tablette (app/(app)/layout.tsx) — même source, même ordre.
 import {
   Home, Map, BarChart2, KanbanSquare, CalendarDays,
-  Users, FileText, Wallet, Clock, User, Sprout, Leaf,
+  Users, FileText, Wallet, Clock, User, Sprout, Leaf, Receipt,
 } from 'lucide-react'
 
 type IconType = React.ComponentType<{ size?: number; color?: string; strokeWidth?: number }>
@@ -35,6 +35,10 @@ const I = {
   soumissions:{ href: '/soumissions',             label: 'Soumissions',  Icon: FileText as IconType },
   payes:      { href: '/payes',                   label: 'Payes',        Icon: Wallet as IconType },
   payesPerso: { href: '/payes',                   label: 'Mes payes',    Icon: Wallet as IconType },
+  // reçus des dépenses entrés dans les jobs (admin : tous ; employé : les siens
+  // + « Entrée de facture »)
+  factures:   { href: '/factures',                label: 'Factures',     Icon: Receipt as IconType },
+  facturesPerso:{ href: '/factures',              label: 'Mes factures', Icon: Receipt as IconType },
   pointage:   { href: '/pointage',                label: 'Pointage',     Icon: Clock as IconType },
   profil:     { href: '/profil',                  label: 'Profil',       Icon: User as IconType },
 } satisfies Record<string, NavItem>
@@ -46,7 +50,7 @@ export const NAV_BY_ROLE: Record<string, NavSection[]> = {
     // directement dans le Pipeline (barre de recherche en haut).
     { title: 'Ventes',          items: [I.pipeline, I.clients] },
     { title: 'Planification',   items: [I.calFen, I.calPays, I.gazon, I.fermeture] },
-    { title: 'Finance',         items: [I.soumissions, I.payes] },
+    { title: 'Finance',         items: [I.soumissions, I.payes, I.factures] },
     { title: 'Compte',          items: [I.profil] },
   ],
   lead: [
@@ -54,7 +58,7 @@ export const NAV_BY_ROLE: Record<string, NavSection[]> = {
     { title: 'Ventes',        items: [I.pipeline, I.clients] },
     { title: 'Planification', items: [I.calFen, I.calPays, I.gazon, I.fermeture] },
     // pointage : la grille 2026 donne aussi des taux horaires au directeur
-    { title: 'Finance',       items: [I.soumissions, I.payesPerso, I.pointage] },
+    { title: 'Finance',       items: [I.soumissions, I.payesPerso, I.pointage, I.factures] },
     { title: 'Compte',        items: [I.profil] },
   ],
   rep: [
@@ -67,14 +71,14 @@ export const NAV_BY_ROLE: Record<string, NavSection[]> = {
   // commercial/copro 22 $/h) en plus de ses % — il doit pouvoir puncher.
   tech: [
     { title: 'Mon espace', items: [I.horaireFen, I.pointage, I.pipeline, I.soumissions] },
-    { title: 'Finance',    items: [I.payesPerso] },
+    { title: 'Finance',    items: [I.payesPerso, I.facturesPerso] },
     { title: 'Compte',     items: [I.profil] },
   ],
   // pas de /gazon ni /fermeture : l'employé ouvre SA run depuis son job au
   // calendrier (« Démarrer la job » → /gazon?route=… ou /fermeture?run=…).
   terrain: [
     { title: 'Mon espace', items: [I.pointage, I.horairePays] },
-    { title: 'Finance',    items: [I.payesPerso] },
+    { title: 'Finance',    items: [I.payesPerso, I.facturesPerso] },
     { title: 'Compte',     items: [I.profil] },
   ],
 }

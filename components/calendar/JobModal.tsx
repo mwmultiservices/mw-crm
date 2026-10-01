@@ -1,15 +1,15 @@
 'use client'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
-import { createJob, updateJob, deleteJob, clientName, jobsHasColumn, type Job, type JobInput, type AssignProfile } from '@/lib/queries/calendar'
+import { createJob, updateJob, deleteJob, clientName, jobLabel, jobsHasColumn, type Job, type JobInput, type AssignProfile } from '@/lib/queries/calendar'
 import { searchClients, fullAddress, type Client } from '@/lib/queries/clients'
 import { GAZON_ROUTES, findRoute, routeLabel } from '@/lib/gazon-routes'
 import { autoFocusDesktop } from '@/lib/ui'
 import { PAY_MODES, PAY_MODE_BY_ID, autoPayMode, type PayMode } from '@/lib/payes'
 import { serviceCatalogFor, servicesFromValue, freeServiceText, joinServiceValue } from '@/lib/services'
 import { getQuotesForClient, getQuote, STATUS_BY_ID, type Quote } from '@/lib/queries/soumissions'
-import { getFermetureRunLabels } from '@/lib/queries/fermeture'
-import { FERMETURE_COLOR } from '@/lib/fermeture'
+import { getFermetureRuns, type FermetureRun } from '@/lib/queries/fermeture'
+import { FERMETURE_COLOR, fmtDuree } from '@/lib/fermeture'
 import { JOB_STATUSES, jobStatusMeta, normalizeJobStatus } from '@/lib/job-status'
 import type { Lane, ProfileMini } from './WeekCalendar'
 import JobExtras from './JobExtras'
@@ -18,7 +18,7 @@ import JobPayPanel from './JobPayPanel'
 import NewClientModal from './NewClientModal'
 import MultiPicker from '@/components/ui/MultiPicker'
 import QuoteDetailModal from '@/components/soumissions/QuoteDetailModal'
-import { Trash2, Navigation, Phone, Play, UserPlus, Eye } from 'lucide-react'
+import { Trash2, Navigation, Phone, Play, UserPlus, Eye, Clock } from 'lucide-react'
 
 interface Props {
   kind: 'fenetre' | 'paysagement'
@@ -57,7 +57,7 @@ const TYPE_LABELS: Record<string, string> = Object.fromEntries(TYPE_OPTIONS.map(
 /** « 14:30 » + 2 h → « 16:30 » (borné à 23:59) */
 function plusHours(time: string, hours: number): string {
   const [h, m] = time.split(':').map(Number)
-  const total = Math.min(h * 60 + m + hours * 60, 23 * 60 + 59)
+  const total = Math.min(Math.round(h * 60 + m + hours * 60), 23 * 60 + 59)
   return `${String(Math.floor(total / 60)).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`
 }
 function buildISO(date: string, time: string): string | null {
@@ -139,19 +139,21 @@ export default function JobModal({ kind, canEdit = true, userId = null, lanes, a
     return () => { cancelled = true }
   }, [isHourly])
 
-  // --- journées préparées dans Run fermeture (menu « Journée de fermeture ») ---
-  const [fermetureRuns, setFermetureRuns] = useState<string[]>([])
+  // --- journées préparées dans Run fermeture (menu « Journée de fermeture »)
+  // avec leur temps estimé (somme des clients) ---
+  const [fermetureRuns, setFermetureRuns] = useState<FermetureRun[]>([])
   useEffect(() => {
     if (!isFermeture) return
     let cancelled = false
-    getFermetureRunLabels().then((list) => { if (!cancelled) setFermetureRuns(list) })
+    getFermetureRuns().then((list) => { if (!cancelled) setFermetureRuns(list) })
     return () => { cancelled = true }
   }, [isFermeture])
   // la journée déjà choisie reste proposée, même vidée de ses clients depuis
-  const runOptions = useMemo(
-    () => (routeName && !fermetureRuns.includes(routeName) ? [routeName, ...fermetureRuns] : fermetureRuns),
-    [routeName, fermetureRuns],
-  )
+  const runOptions = useMemo(() => {
+    const labels = fermetureRuns.map((r) => r.label)
+    return routeName && !labels.includes(routeName) ? [routeName, ...labels] : labels
+  }, [routeName, fermetureRuns])
+  const runInfo = isFermeture ? fermetureRuns.find((r) => r.label === routeName) ?? null : null
 
   // --- autocomplétion client (fenêtres + projets) : taper un nom existant
   // remplit adresse / téléphone / courriel et rattache le job au client.
@@ -379,6 +381,26 @@ export default function JobModal({ kind, canEdit = true, userId = null, lanes, a
                 <p style={{ margin: '5px 2px 0', fontSize: 11, color: '#9CA3AF', lineHeight: 1.45 }}>
                   Aucune journée préparée : divise d&apos;abord les villes en journées dans Run fermeture.
                 </p>
+              )}
+              {/* temps estimé de la journée (somme des clients, Run fermeture) */}
+              {runInfo && runInfo.minutes > 0 && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginTop: 6, fontSize: 12, color: '#374151' }}>
+                  <Clock size={13} color={FERMETURE_COLOR} />
+                  <span>
+                    <strong>{fmtDuree(runInfo.minutes)}</strong> estimées · {runInfo.count} client{runInfo.count > 1 ? 's' : ''}
+                    {runInfo.sansTemps > 0 ? ` (${runInfo.sansTemps} sans temps)` : ''}
+                  </span>
+                  {!ro && start && end !== plusHours(start, runInfo.minutes / 60) && (
+                    <button
+                      type="button"
+                      onClick={() => setEnd(plusHours(start, runInfo.minutes / 60))}
+                      style={{
+                        padding: '3px 9px', borderRadius: 999, cursor: 'pointer', fontSize: 11.5, fontWeight: 700,
+                        border: `1px solid ${FERMETURE_COLOR}66`, background: FERMETURE_COLOR + '0F', color: FERMETURE_COLOR,
+                      }}
+                    >Fin à {plusHours(start, runInfo.minutes / 60)}</button>
+                  )}
+                </div>
               )}
             </Field>
           ) : (
@@ -717,7 +739,7 @@ export default function JobModal({ kind, canEdit = true, userId = null, lanes, a
             isAdmin={canEdit}
           />
         )}
-        {isEdit && <JobExtras jobId={job!.id} userId={userId} isAdmin={canEdit} showPhotos={!isRun} />}
+        {isEdit && <JobExtras jobId={job!.id} userId={userId} isAdmin={canEdit} jobTitle={jobLabel(job!)} showPhotos={!isRun} />}
 
         <div className="mw-modal-actions">
           {ro ? (
@@ -763,8 +785,10 @@ function quoteOptionLabel(q: Quote): string {
 }
 
 function Field({ label, children, flex }: { label: string; children: React.ReactNode; flex?: boolean }) {
+  // minWidth 0 : deux champs côte à côte (Début/Fin) peuvent rétrécir — sans ça
+  // un <input type="time"> iOS élargit la carte et le modal glisse de côté
   return (
-    <label style={{ display: 'block', flex: flex ? 1 : undefined }}>
+    <label style={{ display: 'block', flex: flex ? 1 : undefined, minWidth: 0 }}>
       <span style={{ fontSize: 11, fontWeight: 600, color: '#6B7280', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{label}</span>
       <div style={{ marginTop: 4 }}>{children}</div>
     </label>

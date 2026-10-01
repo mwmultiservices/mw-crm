@@ -35,9 +35,19 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     document.documentElement.classList.add('mw-app-locked')
     document.body.classList.add('mw-app-locked')
+    // Pincement iOS : Safari ignore user-scalable=no et touch-action seul ne
+    // suffit pas partout → on annule le geste (événement propre à Safari).
+    // Sauf sur la carte D2D (Leaflet zoome lui-même, aux touch events).
+    const noPinch = (e: Event) => {
+      if (!(e.target as Element | null)?.closest?.('.leaflet-container')) e.preventDefault()
+    }
+    document.addEventListener('gesturestart', noPinch, { passive: false })
+    document.addEventListener('gesturechange', noPinch, { passive: false })
     return () => {
       document.documentElement.classList.remove('mw-app-locked')
       document.body.classList.remove('mw-app-locked')
+      document.removeEventListener('gesturestart', noPinch)
+      document.removeEventListener('gesturechange', noPinch)
     }
   }, [])
 

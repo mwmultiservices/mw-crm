@@ -1,51 +1,44 @@
 'use client'
 import { useEffect, useRef, useState } from 'react'
-import {
-  getJobPhotos, addJobPhoto, deleteJobPhoto,
-  getJobExpenses, addJobExpense, deleteJobExpense, getTeamProfiles,
-  type JobPhoto, type JobExpense, type AssignProfile,
-} from '@/lib/queries/calendar'
-import { uploadPhoto, photoUrl, deletePhoto } from '@/lib/storage'
+import { getJobPhotos, addJobPhoto, deleteJobPhoto, type JobPhoto } from '@/lib/queries/calendar'
+import { getJobFactures, deleteFacture, factureFileName, type Facture } from '@/lib/queries/factures'
+import { uploadPhoto, photoUrl, photoDownloadUrl, deletePhoto } from '@/lib/storage'
 import { money2 } from '@/lib/payes'
-import { Camera, X, Plus, Receipt } from 'lucide-react'
+import FactureModal from '@/components/factures/FactureModal'
+import { Camera, X, Download, Receipt } from 'lucide-react'
 
 // ============================================================
 // Photos partagées + dépenses (factures) d'un job.
 // Volontairement HORS du <fieldset disabled> du JobModal : les employés
-// (non-admin) peuvent ajouter photos et dépenses depuis le chantier.
+// (non-admin) peuvent ajouter photos et factures depuis le chantier.
+// Chaque facture a son bouton « Télécharger » : le reçu part direct dans
+// Téléchargements (prêt à glisser dans QuickBooks), sans ouvrir l'image.
 // ============================================================
 
 interface Props {
   jobId: string
   userId: string | null
   isAdmin: boolean
+  // libellé de la job (« 🍂 Fermeture Longueuil #1 ») : modal + nom du fichier
+  jobTitle?: string | null
   // gazon : les photos vivent sur la fiche du terrain dans Run gazon, pas sur le job
   showPhotos?: boolean
 }
 
-export default function JobExtras({ jobId, userId, isAdmin, showPhotos = true }: Props) {
+export default function JobExtras({ jobId, userId, isAdmin, jobTitle, showPhotos = true }: Props) {
   const [photos, setPhotos] = useState<JobPhoto[]>([])
-  const [expenses, setExpenses] = useState<JobExpense[]>([])
+  const [expenses, setExpenses] = useState<Facture[]>([])
   const [migrationMissing, setMigrationMissing] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [error, setError] = useState('')
+  const [flash, setFlash] = useState('')
+  const [adding, setAdding] = useState(false) // modal « Entrée de facture »
   const photoRef = useRef<HTMLInputElement>(null)
 
-  // form dépense
-  const [showExpForm, setShowExpForm] = useState(false)
-  const [expLabel, setExpLabel] = useState('')
-  const [expAmount, setExpAmount] = useState('')
-  const [expPayer, setExpPayer] = useState<string>(userId ?? '') // qui a payé
-  const [expFile, setExpFile] = useState<File | null>(null)
-  const [savingExp, setSavingExp] = useState(false)
-  const [team, setTeam] = useState<AssignProfile[]>([])
-  const expFileRef = useRef<HTMLInputElement>(null)
-
   useEffect(() => {
-    Promise.all([getJobPhotos(jobId), getJobExpenses(jobId), getTeamProfiles()]).then(([p, e, t]) => {
+    Promise.all([getJobPhotos(jobId), getJobFactures(jobId)]).then(([p, e]) => {
       setPhotos(p.photos)
-      setExpenses(e.expenses)
-      setTeam(t)
+      setExpenses(e.factures)
       if (p.error || e.error) setMigrationMissing(true)
     })
   }, [jobId])
@@ -77,31 +70,18 @@ export default function JobExtras({ jobId, userId, isAdmin, showPhotos = true }:
     deletePhoto(p.path)
   }
 
-  const saveExpense = async () => {
-    if (!expLabel.trim()) { setError('Nom de la dépense requis (ex. Gaz).'); return }
-    const amount = Number(expAmount)
-    if (!amount || amount <= 0) { setError('Montant requis.'); return }
-    setSavingExp(true); setError('')
-    let photoPath: string | null = null
-    if (expFile) {
-      const { path, error: e } = await uploadPhoto(`expenses/${jobId}`, expFile)
-      if (e) { setSavingExp(false); setError(e); return }
-      photoPath = path
-    }
-    const { error: e2 } = await addJobExpense({ job_id: jobId, profile_id: expPayer || userId, label: expLabel.trim(), amount, photo_path: photoPath })
-    setSavingExp(false)
-    if (e2) { setError(e2); return }
-    setExpLabel(''); setExpAmount(''); setExpFile(null); setExpPayer(userId ?? ''); setShowExpForm(false)
-    const { expenses: fresh } = await getJobExpenses(jobId)
-    setExpenses(fresh)
-  }
-
-  const removeExpense = async (x: JobExpense) => {
+  const removeExpense = async (x: Facture) => {
     if (!confirm(`Supprimer la dépense « ${x.label} » ?`)) return
-    const { error: e } = await deleteJobExpense(x.id)
+    const { error: e } = await deleteFacture(x)
     if (e) { setError(e); return }
     setExpenses((prev) => prev.filter((p) => p.id !== x.id))
-    if (x.photo_path) deletePhoto(x.photo_path)
+  }
+
+  const onFactureSaved = async (message: string) => {
+    setAdding(false)
+    setFlash(message)
+    const { factures } = await getJobFactures(jobId)
+    setExpenses(factures)
   }
 
   const total = expenses.reduce((s, x) => s + (Number(x.amount) || 0), 0)
@@ -133,29 +113,42 @@ export default function JobExtras({ jobId, userId, isAdmin, showPhotos = true }:
       </div>
       )}
 
-      {/* --- DÉPENSES --- */}
+      {/* --- DÉPENSES (factures) --- */}
       <div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <div style={sectionLabel}>Dépenses{expenses.length ? ` · ${money2(total)}` : ''}</div>
-          {!showExpForm && (
-            <button onClick={() => setShowExpForm(true)} style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 4, padding: '4px 10px', borderRadius: 8, border: '1px solid #D1D5DB', background: '#FFF', color: '#374151', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>
-              <Plus size={13} />Dépense
-            </button>
-          )}
+          <button onClick={() => { setFlash(''); setAdding(true) }} style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 5, padding: '6px 11px', borderRadius: 8, border: '1px solid #69C9CA', background: '#69C9CA14', color: '#0E6B6E', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>
+            <Camera size={14} />Entrée de facture
+          </button>
         </div>
+
+        {flash && <div style={{ fontSize: 12, color: '#065F46', margin: '4px 0 6px' }}>{flash}</div>}
 
         {expenses.map((x) => (
           <div key={x.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 0', borderTop: '1px solid #F3F4F6', fontSize: 13 }}>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <span style={{ fontWeight: 600, color: '#111827' }}>{x.label}</span>
-              <span style={{ fontSize: 11, color: '#9CA3AF', marginLeft: 6 }}>{x.profiles?.full_name ? `payé par ${x.profiles.full_name}` : ''}</span>
-            </div>
-            {x.photo_path && (
-              <a href={photoUrl(x.photo_path)} target="_blank" rel="noopener noreferrer" aria-label="Facture" style={{ color: '#0E6B6E', display: 'inline-flex' }}>
+            {x.photo_path ? (
+              <a href={photoUrl(x.photo_path)} target="_blank" rel="noopener noreferrer" aria-label="Voir la facture" style={{ flexShrink: 0, display: 'inline-flex' }}>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={photoUrl(x.photo_path)} alt="" style={{ width: 38, height: 38, objectFit: 'cover', borderRadius: 6, border: '1px solid #E5E7EB' }} />
+              </a>
+            ) : (
+              <span title="Pas de photo" style={{ flexShrink: 0, width: 38, height: 38, borderRadius: 6, background: '#F3F4F6', color: '#9CA3AF', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
                 <Receipt size={15} />
+              </span>
+            )}
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <span style={{ display: 'block', fontWeight: 600, color: '#111827', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{x.label}</span>
+              <span style={{ display: 'block', fontSize: 11, color: '#9CA3AF' }}>
+                {fmtStamp(x.created_at)}{x.profiles?.full_name ? ` · payé par ${x.profiles.full_name}` : ''}
+              </span>
+            </div>
+            <strong style={{ color: '#0D6E6F', whiteSpace: 'nowrap' }}>{money2(Number(x.amount) || 0)}</strong>
+            {/* téléchargement direct (Content-Disposition: attachment) — pas besoin d'ouvrir l'image */}
+            {x.photo_path && (
+              <a href={photoDownloadUrl(x.photo_path, factureFileName(x, jobTitle))} download aria-label="Télécharger la facture" title="Télécharger la facture" style={{ flexShrink: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 32, height: 32, borderRadius: 8, border: '1px solid #69C9CA', background: '#69C9CA14', color: '#0E6B6E' }}>
+                <Download size={15} />
               </a>
             )}
-            <strong style={{ color: '#0D6E6F', whiteSpace: 'nowrap' }}>{money2(Number(x.amount) || 0)}</strong>
             {(isAdmin || x.profile_id === userId) && (
               <button onClick={() => removeExpense(x)} aria-label="Supprimer" style={{ border: 'none', background: 'none', color: '#DC2626', cursor: 'pointer', display: 'inline-flex', padding: 2 }}>
                 <X size={13} />
@@ -163,41 +156,29 @@ export default function JobExtras({ jobId, userId, isAdmin, showPhotos = true }:
             )}
           </div>
         ))}
-
-        {showExpForm && (
-          <div style={{ background: '#F9FAFB', borderRadius: 10, padding: 10, marginTop: 8, display: 'flex', flexDirection: 'column', gap: 8 }}>
-            <div style={{ display: 'flex', gap: 8 }}>
-              <input value={expLabel} onChange={(e) => setExpLabel(e.target.value)} placeholder="Gaz, matériel…" style={{ ...inp, flex: 2 }} />
-              <input value={expAmount} onChange={(e) => setExpAmount(e.target.value)} placeholder="0.00 $" type="number" inputMode="decimal" style={{ ...inp, flex: 1 }} />
-            </div>
-            {/* qui a sorti l'argent (défaut : moi) */}
-            <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, fontWeight: 700, color: '#6B7280' }}>
-              Payé par
-              <select value={expPayer} onChange={(e) => setExpPayer(e.target.value)} style={{ ...inp, flex: 1 }}>
-                {!userId && <option value="">—</option>}
-                {team.map((p) => (
-                  <option key={p.id} value={p.id}>{p.full_name ?? '—'}{p.id === userId ? ' (moi)' : ''}</option>
-                ))}
-              </select>
-            </label>
-            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-              <button onClick={() => expFileRef.current?.click()} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '7px 10px', borderRadius: 8, border: '1px dashed #9CA3AF', background: '#FFF', color: expFile ? '#0D6E6F' : '#6B7280', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>
-                <Camera size={14} />{expFile ? 'Facture ✓' : 'Photo facture'}
-              </button>
-              <input ref={expFileRef} type="file" accept="image/*" style={{ display: 'none' }}
-                onChange={(e) => setExpFile(e.target.files?.[0] ?? null)} />
-              <button onClick={() => { setShowExpForm(false); setExpFile(null); setError('') }} style={{ marginLeft: 'auto', padding: '7px 12px', borderRadius: 8, border: 'none', background: '#F3F4F6', color: '#374151', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>Annuler</button>
-              <button onClick={saveExpense} disabled={savingExp} style={{ padding: '7px 12px', borderRadius: 8, border: 'none', background: '#69C9CA', color: '#06363B', fontSize: 12, fontWeight: 700, cursor: 'pointer', opacity: savingExp ? 0.6 : 1 }}>{savingExp ? '…' : 'Ajouter'}</button>
-            </div>
-          </div>
-        )}
       </div>
 
       {error && <div style={{ color: '#991B1B', fontSize: 12 }}>{error}</div>}
+
+      {adding && (
+        <FactureModal
+          userId={userId}
+          isAdmin={isAdmin}
+          job={{ id: jobId, label: jobTitle || 'Cette job' }}
+          stacked
+          onClose={() => setAdding(false)}
+          onSaved={onFactureSaved}
+        />
+      )}
     </div>
   )
 }
 
+// « 30 sept. 20 h 51 » — date et heure d'entrée de la facture
+const fmtStamp = (iso: string) => {
+  const d = new Date(iso)
+  return `${d.toLocaleDateString('fr-CA', { day: 'numeric', month: 'short' })} ${d.toLocaleTimeString('fr-CA', { hour: '2-digit', minute: '2-digit' })}`
+}
+
 const sectionLabel: React.CSSProperties = { fontSize: 11, fontWeight: 700, color: '#6B7280', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 6 }
-const inp: React.CSSProperties = { padding: '7px 10px', borderRadius: 8, border: '1px solid #D1D5DB', fontSize: 13, background: '#FFF', boxSizing: 'border-box', minWidth: 0 }
 const xBtn: React.CSSProperties = { position: 'absolute', top: -6, right: -6, width: 18, height: 18, borderRadius: '50%', border: 'none', background: '#DC2626', color: '#FFF', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }

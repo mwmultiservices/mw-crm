@@ -92,6 +92,18 @@ body.mw-app-locked {
   width: auto;
 }
 
+/* « L'image bouge comme une page web » (iPhone, demande client 2026-10-01).
+   1. Pas de zoom : iOS ignore user-scalable=no du viewport ; touch-action
+      ne garde que le défilement (ni pincement ni double-tap). :where() =
+      spécificité nulle → toute règle explicite gagne (Leaflet garde son
+      `none` et gère lui-même le zoom de la carte D2D ; curseurs : pan-y). */
+:where(html.mw-app-locked, html.mw-app-locked *) { touch-action: pan-x pan-y; }
+:where(html.mw-app-locked) input[type="range"] { touch-action: pan-y; }
+/* 2. Modal / feuille ouvert : le contenu derrière ne défile plus. Quand la
+      carte du modal n'a rien à faire défiler, iOS passait le geste à
+      .mw-content → tout l'écran glissait sous le doigt. */
+.mw-content:has(.mw-modal-overlay, .mw-sheet-overlay) { overflow: hidden; }
+
 /* ───────── Shell applicatif ─────────
    Bureau (souris + ≥1024 px) : sidebar fixe à gauche.
    Téléphone ET tablette (iPad, toutes orientations) : en-tête avec ☰ qui ouvre
@@ -226,6 +238,7 @@ body.mw-app-locked .mw-shell { height: 100%; }
   padding: 20px;
   max-height: 100%;
   overflow-y: auto;
+  overflow-x: hidden; /* 3. jamais de glissement de côté dans un modal (iPhone) */
   -webkit-overflow-scrolling: touch;
   overscroll-behavior: contain;
   font-family: 'Inter', sans-serif;
@@ -266,6 +279,7 @@ body.mw-app-locked .mw-shell { height: 100%; }
   border-radius: 20px 20px 0 0;
   max-height: 100%;
   overflow-y: auto;
+  overflow-x: hidden;
   -webkit-overflow-scrolling: touch;
   overscroll-behavior: contain;
   padding-bottom: env(safe-area-inset-bottom);
