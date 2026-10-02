@@ -13,6 +13,7 @@ import { FERMETURE_COLOR, fmtDuree } from '@/lib/fermeture'
 import { JOB_STATUSES, jobStatusMeta, normalizeJobStatus } from '@/lib/job-status'
 import type { Lane, ProfileMini } from './WeekCalendar'
 import JobExtras from './JobExtras'
+import JobNotes from './JobNotes'
 import JobUpsells from './JobUpsells'
 import JobPayPanel from './JobPayPanel'
 import NewClientModal from './NewClientModal'
@@ -721,8 +722,11 @@ export default function JobModal({ kind, canEdit = true, userId = null, lanes, a
           {error && <div style={{ color: '#991B1B', fontSize: 13 }}>{error}</div>}
         </fieldset>
 
-        {/* upsells + paye + photos/dépenses : hors fieldset — les employés y ont
-            accès même en lecture seule (ils vendent et saisissent sur le chantier) */}
+        {/* notes du jour + upsells + paye + photos/dépenses : hors fieldset — les
+            employés y ont accès même en lecture seule (ils notent, vendent et
+            saisissent sur le chantier). Runs gazon / fermeture : leurs notes
+            vivent par terrain / client dans la run. */}
+        {isEdit && !isRun && <JobNotes jobId={job!.id} userId={userId} isAdmin={canEdit} />}
         {isEdit && !isRun && (
           <JobUpsells jobId={job!.id} userId={userId} isAdmin={canEdit} onTotalChange={setUpsellTotal} />
         )}

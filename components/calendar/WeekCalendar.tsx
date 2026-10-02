@@ -1,7 +1,7 @@
 'use client'
 import { useRef, useState } from 'react'
 import Link from 'next/link'
-import { Navigation, Play } from 'lucide-react'
+import { MessageSquare, Navigation, Play } from 'lucide-react'
 import { clientName, jobDirectionsUrl, type Job } from '@/lib/queries/calendar'
 import { serviceShortLabel } from '@/lib/services'
 import { jobStatusMeta } from '@/lib/job-status'
@@ -25,6 +25,10 @@ interface Props {
   onJobClick: (job: Job) => void
   // glisser-déposer d'un job vers un autre jour / équipe / heure (admin)
   onMoveJob?: (job: Job, dayKey: string, laneId: string, startMinutes?: number) => void
+  // tirer le haut ou le bas d'une carte : nouvelle heure de début ou de fin (admin)
+  onResizeJob?: (job: Job, start_at: string | null, end_at: string | null) => void
+  // nb de « notes du jour » par job (pastille 💬 sur la carte)
+  noteCounts?: Record<string, number>
 }
 
 const WEEKDAYS = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim']
@@ -38,6 +42,7 @@ const GRID_H = HOURS * HOUR_H
 const COL_W = 116 // largeur d'une colonne équipe
 const GUTTER = 48 // colonne des heures
 const SNAP = 15 // minutes : pas de calage au glisser / clic
+const MIN_DUR = 30 // minutes : durée minimale en tirant un bord (= hauteur minimale d'une carte)
 
 function ymd(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
@@ -55,6 +60,11 @@ function minutesOf(iso: string | null): number | null {
 const fmtTime = (iso: string | null) =>
   iso ? new Date(iso).toLocaleTimeString('fr-CA', { hour: '2-digit', minute: '2-digit' }) : ''
 const hhmm = (mins: number) => `${String(Math.floor(mins / 60)).padStart(2, '0')}:${String(mins % 60).padStart(2, '0')}`
+/** ISO du jour `dayKey` (YYYY-MM-DD) à `mins` minutes après minuit, heure locale */
+function isoAt(dayKey: string, mins: number): string {
+  const [y, m, d] = dayKey.split('-').map(Number)
+  return new Date(y, m - 1, d, Math.floor(mins / 60), mins % 60).toISOString()
+}
 const initials = (name: string | null | undefined) =>
   (name || '?').split(' ').map((p) => p[0]).slice(0, 2).join('').toUpperCase()
 
@@ -131,6 +141,48 @@ function minutesFromEvent(
   return Math.min(Math.max(snapped, START_HOUR * 60), max)
 }
 
+/**
+ * Suit un geste « tirer » vertical (souris ou doigt) lancé par un pointerdown :
+ * onMove(dy) à chaque déplacement, onEnd(moved) au relâcher. Hors du composant :
+ * touche document/window (sélection de texte, curseur, écouteurs globaux).
+ * Le clic qui suit un vrai glissement est avalé — sinon il ouvrirait la job ou
+ * créerait un créneau là où le doigt a été relâché.
+ */
+// vrai pendant un trackVerticalDrag : un appui long iPad sur une poignée ne
+// doit pas lancer en plus le DnD HTML5 de la carte (cf. onDragStart)
+let verticalDragActive = false
+
+function trackVerticalDrag(y0: number, onMove: (dy: number) => void, onEnd: (moved: boolean) => void) {
+  let moved = false
+  verticalDragActive = true
+  const body = document.body.style
+  body.userSelect = 'none'
+  body.cursor = 'ns-resize'
+  const move = (ev: PointerEvent) => {
+    const dy = ev.clientY - y0
+    if (!moved && Math.abs(dy) < 4) return // simple toucher : pas un glissement
+    moved = true
+    onMove(dy)
+  }
+  const swallow = (ev: MouseEvent) => { ev.stopPropagation(); ev.preventDefault() }
+  const up = () => {
+    window.removeEventListener('pointermove', move)
+    window.removeEventListener('pointerup', up)
+    window.removeEventListener('pointercancel', up)
+    body.userSelect = ''
+    body.cursor = ''
+    verticalDragActive = false
+    if (moved) {
+      window.addEventListener('click', swallow, { capture: true, once: true })
+      setTimeout(() => window.removeEventListener('click', swallow, { capture: true }), 400)
+    }
+    onEnd(moved)
+  }
+  window.addEventListener('pointermove', move)
+  window.addEventListener('pointerup', up)
+  window.addEventListener('pointercancel', up)
+}
+
 /** durée d'un job en minutes (1 h par défaut si pas de fin) */
 function durationOf(job: Job): number {
   const s = minutesOf(job.start_at)
@@ -140,15 +192,55 @@ function durationOf(job: Job): number {
 
 export default function WeekCalendar({
   weekStart, lanes, jobs, profileMap, currentUserId, canEdit, groupByTeam = true, onAddJob, onJobClick, onMoveJob,
+  onResizeJob, noteCounts = {},
 }: Props) {
   const now = new Date()
   const todayKey = ymd(now)
   const nowMin = now.getHours() * 60 + now.getMinutes()
   const showNow = nowMin >= START_HOUR * 60 && nowMin <= END_HOUR * 60
   const dnd = canEdit && !!onMoveJob
+  const resizable = canEdit && !!onResizeJob
   const [dragOver, setDragOver] = useState<{ day: string; lane: string; minutes: number; dur: number } | null>(null)
   // point de saisie (offset depuis le haut de la carte) + durée du job en cours de glisser
   const dragRef = useRef<{ grabMin: number; durMin: number } | null>(null)
+
+  // Redimensionnement : on tire la poignée du haut (début) ou du bas (fin)
+  // d'une carte. Aperçu en direct (la carte suit le doigt / la souris, calée
+  // aux 15 min), enregistré au relâcher. Pointer events (souris + tactile
+  // iPad) et non le DnD HTML5, réservé au déplacement de la carte entière.
+  const [resize, setResize] = useState<{ id: string; start_at: string | null; end_at: string | null } | null>(null)
+
+  const startResize = (e: React.PointerEvent, job: Job, edge: 'top' | 'bottom', dayKey: string) => {
+    if (e.pointerType === 'mouse' && e.button !== 0) return
+    e.stopPropagation()
+    const s0 = minutesOf(job.start_at) ?? START_HOUR * 60
+    const e0 = s0 + durationOf(job)
+    let next = { start: s0, end: e0 }
+    trackVerticalDrag(e.clientY, (dy) => {
+      const raw = (edge === 'top' ? s0 : e0) + (dy / HOUR_H) * 60
+      const snapped = Math.round(raw / SNAP) * SNAP
+      const n = edge === 'top'
+        ? { start: Math.min(Math.max(snapped, START_HOUR * 60), e0 - MIN_DUR), end: e0 }
+        : { start: s0, end: Math.max(Math.min(snapped, END_HOUR * 60), s0 + MIN_DUR) }
+      if (n.start === next.start && n.end === next.end) return // inchangé : pas de rendu à chaque pixel
+      next = n
+      setResize({ id: job.id, start_at: isoAt(dayKey, n.start), end_at: isoAt(dayKey, n.end) })
+    }, (moved) => {
+      setResize(null)
+      if (!moved || (next.start === s0 && next.end === e0)) return
+      // seul le bord tiré change : l'autre garde sa valeur exacte en base
+      onResizeJob?.(
+        job,
+        edge === 'top' ? isoAt(dayKey, next.start) : job.start_at,
+        edge === 'bottom' ? isoAt(dayKey, next.end) : (job.end_at ?? isoAt(dayKey, e0)),
+      )
+    })
+  }
+
+  // la job en cours de redimensionnement est affichée avec ses heures provisoires
+  const shownJobs = resize
+    ? jobs.map((j) => (j.id === resize.id ? { ...j, start_at: resize.start_at, end_at: resize.end_at } : j))
+    : jobs
 
   const days = Array.from({ length: 7 }, (_, i) => {
     const d = new Date(weekStart + 'T00:00:00')
@@ -223,7 +315,7 @@ export default function WeekCalendar({
           const key = ymd(day)
           const isToday = key === todayKey
           return lanes.map((lane, li) => {
-            const laneJobs = jobs.filter((j) =>
+            const laneJobs = shownJobs.filter((j) =>
               dayKeyOf(j.start_at) === key && (!groupByTeam || (j.team ?? 'equipe1') === lane.id))
             const placed = layout(laneJobs)
             const over = dragOver?.day === key && dragOver?.lane === lane.id
@@ -286,14 +378,21 @@ export default function WeekCalendar({
                   // journée de la Run fermeture (« Longueuil #2 »)
                   const run = job.type === 'fermeture' && job.route_name ? job.route_name : null
                   const compact = height < 56
+                  const resizing = resize?.id === job.id
+                  const notesN = noteCounts[job.id] ?? 0
+                  // poignées haut / bas : minces sur une carte courte pour laisser le centre au clic
+                  const gripH = Math.min(8, Math.floor(height / 4))
                   return (
                     <div
                       key={job.id}
                       role="button"
                       tabIndex={0}
+                      className={`mw-job-card${resizing ? ' is-resizing' : ''}`}
                       onClick={(e) => { e.stopPropagation(); onJobClick(job) }}
                       draggable={dnd}
                       onDragStart={dnd ? (e) => {
+                        // appui long iPad sur une poignée : c'est un redimensionnement, pas un déplacement
+                        if (verticalDragActive) { e.preventDefault(); return }
                         e.dataTransfer.setData('text/plain', job.id)
                         e.dataTransfer.effectAllowed = 'move'
                         const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
@@ -310,14 +409,31 @@ export default function WeekCalendar({
                         border: `1px solid ${mine ? lane.color : st.color + '66'}`,
                         borderLeft: `4px solid ${st.color}`, borderRadius: 8,
                         background: st.bg,
-                        boxShadow: '0 1px 2px rgba(16,24,40,0.06)',
+                        boxShadow: resizing ? '0 4px 12px rgba(16,24,40,0.18)' : '0 1px 2px rgba(16,24,40,0.06)',
                         padding: compact ? '2px 5px' : '4px 6px', cursor: 'pointer', opacity: canceled ? 0.5 : 1,
-                        zIndex: 1,
+                        zIndex: resizing ? 3 : 1,
                       }}
                     >
+                      {resizable && (['top', 'bottom'] as const).map((edge) => (
+                        <div
+                          key={edge}
+                          aria-hidden
+                          title={edge === 'top' ? 'Tirer pour changer le début' : 'Tirer pour changer la fin'}
+                          onPointerDown={(e) => startResize(e, job, edge, key)}
+                          // empêche le DnD HTML5 de la carte et la sélection de texte (souris)
+                          onMouseDown={(e) => { e.preventDefault(); e.stopPropagation() }}
+                          style={{
+                            position: 'absolute', left: 0, right: 0, [edge]: 0, height: gripH, zIndex: 2,
+                            cursor: 'ns-resize', touchAction: 'none',
+                            display: 'flex', justifyContent: 'center', alignItems: edge === 'top' ? 'flex-start' : 'flex-end',
+                          }}
+                        >
+                          <span className="mw-job-grip" style={{ width: 18, height: 3, margin: '1px 0', borderRadius: 2, background: st.color }} />
+                        </div>
+                      ))}
                       <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
                         <div style={{ fontSize: 10, fontWeight: 700, color: '#374151', whiteSpace: 'nowrap', overflow: 'hidden' }}>
-                          {fmtTime(job.start_at)}{job.end_at && !compact ? `–${fmtTime(job.end_at)}` : ''}
+                          {fmtTime(job.start_at)}{job.end_at && (!compact || resizing) ? `–${fmtTime(job.end_at)}` : ''}
                           {st.id !== 'confirmed' && (
                             <span style={{ marginLeft: 4, padding: '0 5px', borderRadius: 999, background: st.color, color: '#FFF', fontSize: 9, fontWeight: 800 }}>{st.short}</span>
                           )}
@@ -356,8 +472,18 @@ export default function WeekCalendar({
                           </a>
                         )}
                       </div>
-                      <div style={{ fontSize: 12, fontWeight: 600, color: '#111827', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                        {route ? `🌿 ${route.label}` : run ? `🍂 ${run}` : (clientName(job) || job.title || job.service || 'Job')}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+                        <div style={{ flex: 1, minWidth: 0, fontSize: 12, fontWeight: 600, color: '#111827', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                          {route ? `🌿 ${route.label}` : run ? `🍂 ${run}` : (clientName(job) || job.title || job.service || 'Job')}
+                        </div>
+                        {notesN > 0 && (
+                          <span title={`${notesN} note${notesN > 1 ? 's' : ''} du jour`} style={{
+                            display: 'inline-flex', alignItems: 'center', gap: 2, flexShrink: 0,
+                            fontSize: 10, fontWeight: 800, color: '#0E6B6E',
+                          }}>
+                            <MessageSquare size={11} />{notesN}
+                          </span>
+                        )}
                       </div>
                       {!compact && !route && !run && job.route_name && <div style={{ fontSize: 10, color: '#697035' }}>🌿 {job.route_name}</div>}
                       {/* libellé court : « Lavage de vitres intérieur / extérieur » ne rentre pas dans 116 px */}

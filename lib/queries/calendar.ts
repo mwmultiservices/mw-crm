@@ -214,6 +214,49 @@ export async function deleteJobPhoto(id: string): Promise<{ error: string | null
   return { error: error?.message ?? null }
 }
 
+// ============================================================
+// Notes du jour d'une job — table job_notes (migration_crm_job_notes.sql).
+// Les techniciens notent ce qu'ils voient sur place, comme les notes de
+// terrain de la Run gazon (gazon_notes). error non-null = migration absente.
+// ============================================================
+
+export interface JobNote {
+  id: string
+  job_id: string
+  note: string
+  author_id: string | null
+  created_at: string
+  profiles?: { full_name: string | null } | null
+}
+
+export async function getJobNotes(jobId: string): Promise<{ notes: JobNote[]; error: string | null }> {
+  const { data, error } = await supabase
+    .from('job_notes')
+    .select('*, profiles(full_name)')
+    .eq('job_id', jobId)
+    .order('created_at', { ascending: true })
+  return { notes: (data as JobNote[]) ?? [], error: error?.message ?? null }
+}
+
+export async function addJobNote(jobId: string, note: string, authorId: string | null): Promise<{ error: string | null }> {
+  const { error } = await supabase.from('job_notes').insert({ job_id: jobId, note, author_id: authorId })
+  return { error: error?.message ?? null }
+}
+
+export async function deleteJobNote(id: string): Promise<{ error: string | null }> {
+  const { error } = await supabase.from('job_notes').delete().eq('id', id)
+  return { error: error?.message ?? null }
+}
+
+// Nb de notes par job (pastille 💬 du calendrier). Table absente → {}.
+export async function getJobNoteCounts(jobIds: string[]): Promise<Record<string, number>> {
+  if (jobIds.length === 0) return {}
+  const { data } = await supabase.from('job_notes').select('job_id').in('job_id', jobIds)
+  const counts: Record<string, number> = {}
+  for (const r of (data as { job_id: string }[] | null) ?? []) counts[r.job_id] = (counts[r.job_id] ?? 0) + 1
+  return counts
+}
+
 // Toute l'équipe (menu « payé par » d'une dépense de job).
 export async function getTeamProfiles(): Promise<AssignProfile[]> {
   const { data } = await supabase

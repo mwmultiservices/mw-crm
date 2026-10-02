@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { supabase } from '@/lib/supabase'
 import { isManager } from '@/lib/roles'
 import { mondayOf, addWeeks, formatWeekLabel } from '@/lib/payes'
-import { getJobsWeek, getAssignableProfiles, updateJob, type Job, type AssignProfile } from '@/lib/queries/calendar'
+import { getJobsWeek, getAssignableProfiles, getJobNoteCounts, updateJob, type Job, type AssignProfile } from '@/lib/queries/calendar'
 import { JOB_STATUSES } from '@/lib/job-status'
 import WeekCalendar, { type Lane, type ProfileMini } from './WeekCalendar'
 import JobModal from './JobModal'
@@ -28,6 +28,8 @@ export default function CalendarView({ kind }: { kind: 'fenetre' | 'paysagement'
   const [userId, setUserId] = useState<string | null>(null)
   const [weekStart, setWeekStart] = useState(mondayOf())
   const [jobs, setJobs] = useState<Job[]>([])
+  // nb de « notes du jour » par job (pastille 💬 sur les cartes)
+  const [noteCounts, setNoteCounts] = useState<Record<string, number>>({})
   const [profileMap, setProfileMap] = useState<Record<string, ProfileMini>>({})
   const [assignProfiles, setAssignProfiles] = useState<AssignProfile[]>([])
   const [loading, setLoading] = useState(true)
@@ -38,7 +40,9 @@ export default function CalendarView({ kind }: { kind: 'fenetre' | 'paysagement'
   const canEdit = isManager(role)
 
   const loadJobs = useCallback(async (ws: string) => {
-    setJobs(await getJobsWeek([...cfg.types], ws))
+    const list = await getJobsWeek([...cfg.types], ws)
+    setJobs(list)
+    setNoteCounts(await getJobNoteCounts(list.map((j) => j.id)))
   }, [cfg.types])
 
   useEffect(() => {
@@ -113,6 +117,13 @@ export default function CalendarView({ kind }: { kind: 'fenetre' | 'paysagement'
     if (error) { alert(error); loadJobs(weekStart) }
   }
 
+  // Bord du haut ou du bas d'une carte tiré : nouvelle heure de début / de fin.
+  const resizeJob = async (job: Job, start_at: string | null, end_at: string | null) => {
+    setJobs((prev) => prev.map((j) => (j.id === job.id ? { ...j, start_at, end_at } : j)))
+    const { error } = await updateJob(job.id, { start_at, end_at })
+    if (error) { alert(error); loadJobs(weekStart) }
+  }
+
   return (
     <div style={{ fontFamily: 'Inter, sans-serif', padding: '12px 16px var(--mw-page-pb)' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 16 }}>
@@ -157,14 +168,16 @@ export default function CalendarView({ kind }: { kind: 'fenetre' | 'paysagement'
           onAddJob={(dateISO, laneId) => setModal({ date: dateISO.slice(0, 10), time: dateISO.slice(11, 16), team: laneId })}
           onJobClick={(job) => setModal({ job })}
           onMoveJob={moveJob}
+          onResizeJob={resizeJob}
+          noteCounts={noteCounts}
         />
       )}
 
       {!loading && (
         <p style={{ fontSize: 12, color: '#9CA3AF', marginTop: 8 }}>
           {canEdit
-            ? 'Clique un créneau libre pour créer une job. Glisse une job vers un autre jour, une autre équipe ou une autre heure (pas de 15 min).'
-            : 'Ton horaire de la semaine. Touche une job pour voir les détails (adresse, GPS, coéquipiers, photos, dépenses).'}
+            ? 'Clique un créneau libre pour créer une job. Glisse une job vers un autre jour, une autre équipe ou une autre heure ; tire son haut ou son bas pour changer le début ou la fin (pas de 15 min).'
+            : 'Ton horaire de la semaine. Touche une job pour voir les détails (adresse, GPS, coéquipiers, photos, dépenses) et y laisser une note du jour.'}
         </p>
       )}
 
@@ -180,7 +193,8 @@ export default function CalendarView({ kind }: { kind: 'fenetre' | 'paysagement'
           initialStart={modal.time}
           initialTeam={modal.team}
           job={modal.job}
-          onClose={() => setModal(null)}
+          // une note du jour a pu être ajoutée : la pastille 💬 se met à jour
+          onClose={() => { setModal(null); loadJobs(weekStart) }}
           onSaved={onSaved}
         />
       )}

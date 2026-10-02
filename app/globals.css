@@ -187,6 +187,13 @@ body.mw-app-locked .mw-shell { height: 100%; }
   transition: transform 220ms ease, visibility 0s;
 }
 
+/* Calendrier (WeekCalendar) : poignées « tirer le haut / le bas » d'une job.
+   Visibles au survol à la souris ; toujours visibles au tactile (pas de survol). */
+.mw-job-grip { opacity: 0; transition: opacity 120ms; }
+.mw-job-card:hover .mw-job-grip,
+.mw-job-card.is-resizing .mw-job-grip { opacity: 0.9; }
+@media (hover: none) { .mw-job-grip { opacity: 0.55; } }
+
 /* Bouton Rafraîchir flottant : bureau seulement (dans l'en-tête ailleurs) */
 .mw-refresh { display: none; bottom: calc(20px + env(safe-area-inset-bottom)); }
 
